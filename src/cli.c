@@ -400,6 +400,11 @@ int cmd_search(int argc, char **argv)
     if (argc < 2)
         return fap_error("search: provide a query");
 
+    const char *stable_url = getenv("FAP_STABLE_INDEX_URL");
+    const char *edge_url = getenv("FAP_EDGE_INDEX_URL");
+    if (!(stable_url && *stable_url) && !(edge_url && *edge_url))
+        return fap_error("search: no channels configured; set FAP_STABLE_INDEX_URL and/or FAP_EDGE_INDEX_URL");
+
     FapIndex *stable = malloc(sizeof(FapIndex));
     FapIndex *edge = malloc(sizeof(FapIndex));
     if (!stable || !edge) {
@@ -408,15 +413,24 @@ int cmd_search(int argc, char **argv)
         return fap_error("out of memory");
     }
 
-    int rc = fap_index_fetch(FAP_CHANNEL_STABLE, stable);
-    if (rc == 0)
-        rc = fap_index_fetch(FAP_CHANNEL_EDGE, edge);
-
-    if (rc == 0) {
-        int found = search_index(stable, argv[1]) + search_index(edge, argv[1]);
-        if (found == 0)
-            printf("no packages found matching \"%s\"\n", argv[1]);
+    /* Search whichever channels are configured; a channel with no
+     * index URL set is skipped, not treated as an error (fap_channels
+     * shows the same "not configured" state as normal). */
+    int rc = 0;
+    int found = 0;
+    if (stable_url && *stable_url) {
+        rc = fap_index_fetch(FAP_CHANNEL_STABLE, stable);
+        if (rc == 0)
+            found += search_index(stable, argv[1]);
     }
+    if (rc == 0 && edge_url && *edge_url) {
+        rc = fap_index_fetch(FAP_CHANNEL_EDGE, edge);
+        if (rc == 0)
+            found += search_index(edge, argv[1]);
+    }
+
+    if (rc == 0 && found == 0)
+        printf("no packages found matching \"%s\"\n", argv[1]);
 
     free(stable);
     free(edge);
