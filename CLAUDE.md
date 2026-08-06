@@ -61,7 +61,7 @@ name = "myproject"
 
 [dependencies]
 curl = { version = "8.6.0", channel = "stable" }
-jq   = { version = "1.7",   channel = "stable" }
+jq   = { channel = "stable" }   # latest on stable
 eza  = { channel = "edge" }   # latest on edge
 ```
 
