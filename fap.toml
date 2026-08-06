@@ -1,0 +1,7 @@
+[package]
+name = "myproject"
+
+[dependencies]
+curl = { version = "8.6.0", channel = "stable" }
+jq   = { version = "1.7",   channel = "stable" }
+eza  = { channel = "edge" }

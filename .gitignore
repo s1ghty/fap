@@ -1,0 +1,11 @@
+*.o
+/fap
+tests/test_hash
+tests/test_lock
+tests/test_config
+tests/test_registry
+tests/test_resolver
+tests/test_package
+tests/test_install
+.DS_Store
+.claude/
