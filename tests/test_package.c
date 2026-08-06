@@ -1,3 +1,4 @@
+#define _POSIX_C_SOURCE 200809L
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -125,7 +126,7 @@ static void test_extract_sample(void)
 
     snprintf(path, sizeof(path), "%s/share", dest);
     struct stat st;
-    CHECK(stat(path, &st) == 0 && (st.st_mode & S_IFMT) == S_IFDIR, "directory entry created");
+    CHECK(stat(path, &st) == 0 && S_ISDIR(st.st_mode), "directory entry created");
 
     snprintf(path, sizeof(path), "%s/bin/tool-link", dest);
     char linktarget[64] = {0};
