@@ -47,16 +47,37 @@ static void cache_free(IndexCache *c)
     free(c->idx[1]);
 }
 
+static int lock_path(char *buf, size_t bufsz)
+{
+    return fap_home_path(FAP_LOCK, buf, bufsz);
+}
+
+static int manifest_path(char *buf, size_t bufsz)
+{
+    return fap_home_path(FAP_MANIFEST, buf, bufsz);
+}
+
 /* fap.lock not existing yet is not an error — it just means nothing
  * is tracked so far. */
 static int load_lock(FapLock *lock)
 {
+    char path[FAP_MAX_PATH];
+    if (lock_path(path, sizeof(path)) < 0)
+        return -1;
     struct stat st;
-    if (stat(FAP_LOCK, &st) < 0) {
+    if (stat(path, &st) < 0) {
         memset(lock, 0, sizeof(*lock));
         return 0;
     }
-    return fap_lock_load(FAP_LOCK, lock);
+    return fap_lock_load(path, lock);
+}
+
+static int save_lock(const FapLock *lock)
+{
+    char path[FAP_MAX_PATH];
+    if (lock_path(path, sizeof(path)) < 0)
+        return -1;
+    return fap_lock_save(path, lock);
 }
 
 static int lock_upsert(FapLock *lock, const FapPackage *pkg)
@@ -222,10 +243,14 @@ int cmd_install(int argc, char **argv)
     if (argc < 2)
         return fap_error("install: specify at least one package");
 
+    char manifest_p[FAP_MAX_PATH];
+    if (manifest_path(manifest_p, sizeof(manifest_p)) < 0)
+        return -1;
+
     FapManifest manifest;
     memset(&manifest, 0, sizeof(manifest));
     struct stat st;
-    if (stat(FAP_MANIFEST, &st) == 0 && fap_manifest_load(FAP_MANIFEST, &manifest) < 0)
+    if (stat(manifest_p, &st) == 0 && fap_manifest_load(manifest_p, &manifest) < 0)
         return -1;
 
     FapLock *lock = malloc(sizeof(FapLock));
@@ -245,11 +270,11 @@ int cmd_install(int argc, char **argv)
          * time, same distinction pacman draws between "explicit" and
          * "installed as a dependency" packages. */
         if (rc == 0)
-            rc = fap_manifest_add_dep(FAP_MANIFEST, argv[i], channel);
+            rc = fap_manifest_add_dep(manifest_p, argv[i], channel);
     }
 
     if (rc == 0)
-        rc = fap_lock_save(FAP_LOCK, lock);
+        rc = save_lock(lock);
 
     cache_free(&cache);
     free(lock);
@@ -263,6 +288,10 @@ int cmd_remove(int argc, char **argv)
     if (argc < 2)
         return fap_error("remove: specify at least one package");
 
+    char manifest_p[FAP_MAX_PATH];
+    if (manifest_path(manifest_p, sizeof(manifest_p)) < 0)
+        return -1;
+
     FapLock *lock = malloc(sizeof(FapLock));
     if (!lock)
         return fap_error("out of memory");
@@ -274,11 +303,11 @@ int cmd_remove(int argc, char **argv)
         if (rc == 0)
             lock_remove(lock, argv[i]);
         if (rc == 0)
-            rc = fap_manifest_remove_dep(FAP_MANIFEST, argv[i]);
+            rc = fap_manifest_remove_dep(manifest_p, argv[i]);
     }
 
     if (rc == 0)
-        rc = fap_lock_save(FAP_LOCK, lock);
+        rc = save_lock(lock);
 
     free(lock);
     return rc;
@@ -311,8 +340,12 @@ int cmd_sync(int argc, char **argv)
 {
     (void)argc; (void)argv;
 
+    char manifest_p[FAP_MAX_PATH];
+    if (manifest_path(manifest_p, sizeof(manifest_p)) < 0)
+        return -1;
+
     FapManifest manifest;
-    if (fap_manifest_load(FAP_MANIFEST, &manifest) < 0)
+    if (fap_manifest_load(manifest_p, &manifest) < 0)
         return -1;
 
     FapLock *lock = malloc(sizeof(FapLock));
@@ -327,7 +360,7 @@ int cmd_sync(int argc, char **argv)
         rc = sync_dep(&manifest.deps[i], lock, &cache);
 
     if (rc == 0)
-        rc = fap_lock_save(FAP_LOCK, lock);
+        rc = save_lock(lock);
 
     cache_free(&cache);
     free(lock);
@@ -379,7 +412,7 @@ int cmd_update(int argc, char **argv)
     }
 
     if (rc == 0)
-        rc = fap_lock_save(FAP_LOCK, lock);
+        rc = save_lock(lock);
 
     cache_free(&cache);
     free(lock);

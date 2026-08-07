@@ -39,6 +39,8 @@ make test
 │   ├── curl -> ../fap/pkgs/curl-8.6.0/bin/curl     (plain symlink, no libs)
 │   └── mytool                                       (wrapper script, has libs — see below)
 └── fap/
+    ├── fap.toml          (declarative manifest, kept in sync by install/remove)
+    ├── fap.lock          (exact resolved versions + hashes)
     ├── staging/          (temp during install, always cleaned up)
     ├── libs/             (bundled .so files, shared across all packages)
     │   └── libmytool.so.1
@@ -73,13 +75,17 @@ is system-wide and needs root, which fap's design rules out.
 
 ## Moving to a new machine
 
-`fap install <pkg>` and `fap remove <pkg>` keep `fap.toml` in sync with
-what you've explicitly asked for (creating it with a default
-`[package]` section the first time, if it didn't exist). To reproduce
-the same set of top-level packages elsewhere: copy `fap.toml` to the
-new machine and run `fap sync`. Transitive dependencies aren't written
-into it — those get re-resolved from the registry every time, same as
-`pkg.deps` always has.
+`fap.toml` and `fap.lock` both live at `~/.local/fap/` — machine-wide,
+not per-directory. `fap install <pkg>` and `fap remove <pkg>` keep
+`fap.toml` in sync with what you've explicitly asked for (creating it
+with a default `[package]` section the first time, if it didn't
+exist), so running `fap install` from any directory always sees the
+same state instead of scattering a separate manifest/lock into
+whatever folder you happened to be standing in. To reproduce the same
+set of top-level packages elsewhere: copy `~/.local/fap/fap.toml` to
+the new machine and run `fap sync`. Transitive dependencies aren't
+written into it — those get re-resolved from the registry every time,
+same as `pkg.deps` always has.
 
 ## Registry config
 

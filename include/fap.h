@@ -13,8 +13,13 @@
 #define FAP_STAGING     ".local/fap/staging"
 #define FAP_LIBS        ".local/fap/libs"
 #define FAP_BIN         ".local/bin"
-#define FAP_MANIFEST    "fap.toml"
-#define FAP_LOCK        "fap.lock"
+/* Both live under the install root (resolved via fap_home_path), not
+ * the current directory — fap tracks machine-wide state, like a
+ * distro package manager, not a per-project dependency file. Running
+ * `fap install` from two different directories must see the same
+ * manifest/lock, not create a second copy. */
+#define FAP_MANIFEST    ".local/fap/fap.toml"
+#define FAP_LOCK        ".local/fap/fap.lock"
 
 /* ── limits ───────────────────────────────────────────────────── */
 #define FAP_MAX_NAME    128
