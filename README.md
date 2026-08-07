@@ -73,7 +73,14 @@ is system-wide and needs root, which fap's design rules out.
 
 ## Registry config
 
-Channel index URLs aren't hardcoded (no real registry exists yet) — set
-`FAP_STABLE_INDEX_URL` / `FAP_EDGE_INDEX_URL` before running `fap search`,
-`install`, `sync`, `update`, or `info`. `fap channels` shows what's
-currently configured.
+Channel index URLs aren't hardcoded — set `FAP_STABLE_INDEX_URL` /
+`FAP_EDGE_INDEX_URL` before running `fap search`, `install`, `sync`,
+`update`, or `info`. `fap channels` shows what's currently configured.
+Only one channel needs to be set; commands that check both (like
+`fap search`) just skip whichever one isn't configured.
+
+## Timing
+
+Set `FAP_TIME=1` to print how long a command took, e.g.
+`FAP_TIME=1 fap install jq` → `install: 842ms`. Off by default, no
+extra output otherwise.
