@@ -1,6 +1,8 @@
+#define _POSIX_C_SOURCE 200809L
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
+#include <time.h>
 #include "fap.h"
 
 /* Forward declarations — implemented in cli.c */
@@ -70,8 +72,22 @@ int main(int argc, char **argv)
 
     for (const Command *c = commands; c->name; c++) {
         if (strcmp(cmd, c->name) == 0) {
+            /* set FAP_TIME=1 to print how long the command took */
+            int timing = getenv("FAP_TIME") != NULL;
+            struct timespec t0, t1;
+            if (timing)
+                clock_gettime(CLOCK_MONOTONIC, &t0);
+
             /* Pass sub-argv: argv[0]=program, argv[1]=subcommand args */
             int ret = c->fn(argc - 1, argv + 1);
+
+            if (timing) {
+                clock_gettime(CLOCK_MONOTONIC, &t1);
+                double ms = (t1.tv_sec - t0.tv_sec) * 1000.0
+                          + (t1.tv_nsec - t0.tv_nsec) / 1e6;
+                printf("%s: %.0fms\n", cmd, ms);
+            }
+
             if (ret < 0)
                 fprintf(stderr, "error: %s\n", fap_err);
             return ret < 0 ? 1 : 0;

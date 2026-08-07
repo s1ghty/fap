@@ -39,7 +39,22 @@ install: $(BIN)
 	install -m 755 $(BIN) $(BINDIR)/$(BIN)
 	@case ":$$PATH:" in \
 		*":$(BINDIR):"*) ;; \
-		*) echo "note: $(BINDIR) is not on your PATH — add it in your shell rc" ;; \
+		*) \
+			rc=""; \
+			case "$$SHELL" in \
+				*/zsh)  rc="$$HOME/.zshrc" ;; \
+				*/bash) rc="$$HOME/.bashrc" ;; \
+			esac; \
+			if [ -z "$$rc" ]; then \
+				echo "note: $(BINDIR) is not on your PATH — add 'export PATH=\"$(BINDIR):\$$PATH\"' to your shell rc"; \
+			elif [ -f "$$rc" ] && grep -qF '$(BINDIR)' "$$rc"; then \
+				echo "note: $(BINDIR) is already referenced in $$rc — restart your shell or run: source $$rc"; \
+			else \
+				echo '' >> "$$rc"; \
+				echo '# added by fap: make install' >> "$$rc"; \
+				echo 'export PATH="$(BINDIR):$$PATH"' >> "$$rc"; \
+				echo "note: added $(BINDIR) to PATH in $$rc — restart your shell or run: source $$rc"; \
+			fi ;; \
 	esac
 
 uninstall:
