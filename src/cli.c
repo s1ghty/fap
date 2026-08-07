@@ -199,7 +199,7 @@ static int resolve_and_install(const char *name, FapChannel channel, const char 
 }
 
 static int install_one(const char *name, const FapManifest *manifest,
-                        IndexCache *cache, FapLock *lock)
+                        IndexCache *cache, FapLock *lock, FapChannel *channel_out)
 {
     FapChannel channel = FAP_CHANNEL_STABLE;
     const char *pinned_version = NULL;
@@ -212,6 +212,8 @@ static int install_one(const char *name, const FapManifest *manifest,
         }
     }
 
+    if (channel_out)
+        *channel_out = channel;
     return resolve_and_install(name, channel, pinned_version, cache, lock);
 }
 
@@ -234,8 +236,17 @@ int cmd_install(int argc, char **argv)
     IndexCache cache;
     memset(&cache, 0, sizeof(cache));
 
-    for (int i = 1; rc == 0 && i < argc; i++)
-        rc = install_one(argv[i], &manifest, &cache, lock);
+    for (int i = 1; rc == 0 && i < argc; i++) {
+        FapChannel channel;
+        rc = install_one(argv[i], &manifest, &cache, lock, &channel);
+        /* Record only what was explicitly asked for, not the whole
+         * resolved dependency chain — fap.toml tracks intent, the
+         * resolver re-derives transitive deps from the registry every
+         * time, same distinction pacman draws between "explicit" and
+         * "installed as a dependency" packages. */
+        if (rc == 0)
+            rc = fap_manifest_add_dep(FAP_MANIFEST, argv[i], channel);
+    }
 
     if (rc == 0)
         rc = fap_lock_save(FAP_LOCK, lock);
@@ -262,6 +273,8 @@ int cmd_remove(int argc, char **argv)
         rc = fap_remove(argv[i]);
         if (rc == 0)
             lock_remove(lock, argv[i]);
+        if (rc == 0)
+            rc = fap_manifest_remove_dep(FAP_MANIFEST, argv[i]);
     }
 
     if (rc == 0)

@@ -7,7 +7,7 @@ No daemon, no runtime, no bloat.
 ## Design decisions (settled, do not revisit)
 - Target: **Linux x86_64 only**. No cross-platform support, no arch/OS detection anywhere in the codebase — don't add any.
 - Written in **C99**
-- **fap.toml** — declarative manifest (what you want)
+- **fap.toml** — declarative manifest (what you want). `fap install`/`fap remove` also keep it in sync (add/drop a bare, unpinned entry) so it always reflects your explicit installs, NixOS-`configuration.nix`-style — copy just this file to another machine and `fap sync` reproduces the same top-level packages. Only top-level requested packages are recorded, never the transitive deps a resolve pulled in alongside them — those are re-derived from the registry every time, not tracked declaratively.
 - **fap.lock** — lockfile (exact resolved versions + hashes)
 - Two channels: **stable** and **edge**
 - Atomic installs via **staging directory** — fully written before any symlink swap
@@ -20,8 +20,8 @@ No daemon, no runtime, no bloat.
 
 ## CLI surface (settled)
 ```
-fap install [pkg]       # install package(s), update lock
-fap remove [pkg]        # remove package, update lock
+fap install [pkg]       # install package(s), update lock and fap.toml
+fap remove [pkg]        # remove package, update lock and fap.toml
 fap sync                # install everything in fap.toml (from lock if exists)
 fap update [pkg]        # upgrade to latest in channel, update lock
 fap search <query>      # search registry
