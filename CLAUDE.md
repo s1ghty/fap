@@ -7,8 +7,8 @@ No daemon, no runtime, no bloat.
 ## Design decisions (settled, do not revisit)
 - Target: **Linux x86_64 only**. No cross-platform support, no arch/OS detection anywhere in the codebase — don't add any.
 - Written in **C99**
-- **fap.toml** — declarative manifest (what you want). `fap install`/`fap remove` also keep it in sync (add/drop a bare, unpinned entry) so it always reflects your explicit installs, NixOS-`configuration.nix`-style — copy just this file to another machine and `fap sync` reproduces the same top-level packages. Only top-level requested packages are recorded, never the transitive deps a resolve pulled in alongside them — those are re-derived from the registry every time, not tracked declaratively.
-- **fap.lock** — lockfile (exact resolved versions + hashes)
+- **fap.toml** — declarative manifest (what you want), lives at `~/.local/fap/fap.toml` — machine-wide, not per-directory (fap is a system package manager, not a per-project dependency tool; running `fap install` from two different directories must see the same state, not create two). `fap install`/`fap remove` also keep it in sync (add/drop a bare, unpinned entry) so it always reflects your explicit installs, NixOS-`configuration.nix`-style — copy just this file to another machine and `fap sync` reproduces the same top-level packages. Only top-level requested packages are recorded, never the transitive deps a resolve pulled in alongside them — those are re-derived from the registry every time, not tracked declaratively.
+- **fap.lock** — lockfile (exact resolved versions + hashes), lives at `~/.local/fap/fap.lock`, same machine-wide reasoning as fap.toml
 - Two channels: **stable** and **edge**
 - Atomic installs via **staging directory** — fully written before any symlink swap
 - Compression: **zstd**
@@ -55,6 +55,7 @@ fap/
 ```
 
 ## fap.toml format
+Lives at `~/.local/fap/fap.toml` at runtime (the copy in this repo's root is just a format example, not something fap ever reads from a project directory).
 ```toml
 [package]
 name = "myproject"
