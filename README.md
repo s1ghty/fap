@@ -18,7 +18,7 @@ Minimal C package manager. No daemon, no runtime, no bullshit.
 | Dep resolver | src/resolver.c   | ✅ done        |
 | Download     | src/package.c    | ✅ done        |
 | Install      | src/install.c    | ✅ done        |
-| Tests        | tests/*.c        | ✅ done (125 checks across 7 files) |
+| Tests        | tests/*.c        | ✅ done (140 checks across 7 files) |
 
 ## Build
 
@@ -70,6 +70,16 @@ is system-wide and needs root, which fap's design rules out.
 5. `src/install.c`  — staging dir logic + rename + symlinks
 6. `src/cli.c`      — wire up commands to the above
 7. More tests
+
+## Moving to a new machine
+
+`fap install <pkg>` and `fap remove <pkg>` keep `fap.toml` in sync with
+what you've explicitly asked for (creating it with a default
+`[package]` section the first time, if it didn't exist). To reproduce
+the same set of top-level packages elsewhere: copy `fap.toml` to the
+new machine and run `fap sync`. Transitive dependencies aren't written
+into it — those get re-resolved from the registry every time, same as
+`pkg.deps` always has.
 
 ## Registry config
 

@@ -92,6 +92,20 @@ int fap_error(const char *fmt, ...);
 /* config.h  — parse fap.toml into FapManifest */
 int fap_manifest_load(const char *path, FapManifest *out);
 
+/* Adds (or updates the channel of) a bare, unpinned dependency entry
+ * and atomically rewrites path — creating it with a default
+ * [package] section first if it doesn't exist yet. Used by `fap
+ * install` so imperative installs are also recorded declaratively:
+ * copy fap.toml to another machine, run `fap sync`, get the same
+ * packages back. */
+int fap_manifest_add_dep(const char *path, const char *name, FapChannel channel);
+
+/* Removes a dependency entry if present and atomically rewrites path.
+ * A missing file, or a name not found in it, is not an error — used
+ * by `fap remove` as best-effort bookkeeping the same way lock_remove
+ * is. */
+int fap_manifest_remove_dep(const char *path, const char *name);
+
 /* lock.h    — read/write fap.lock */
 int fap_lock_load(const char *path, FapLock *out);
 int fap_lock_save(const char *path, const FapLock *lock);

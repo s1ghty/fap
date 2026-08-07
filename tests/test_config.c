@@ -71,6 +71,47 @@ static void test_manifest_bad_dep_shape(void)
     CHECK(fap_manifest_load(tmpfile, &m) < 0, "manifest_load rejects non-table dependency");
 }
 
+static void test_manifest_add_remove_dep(void)
+{
+    const char *tmpfile = "/tmp/fap_test_addrm.toml";
+    remove(tmpfile); /* start from a clean slate, unlike the read-only tests above */
+
+    CHECK(fap_manifest_add_dep(tmpfile, "jq", FAP_CHANNEL_STABLE) == 0,
+          "add_dep creates a manifest that didn't exist");
+
+    FapManifest m;
+    CHECK(fap_manifest_load(tmpfile, &m) == 0, "created manifest loads back");
+    CHECK(strcmp(m.project_name, "system") == 0, "default project name is \"system\"");
+    CHECK(m.deps_count == 1 && strcmp(m.deps[0].name, "jq") == 0, "jq dep present");
+    CHECK(m.deps[0].version[0] == '\0', "jq dep is unpinned (bare channel)");
+    CHECK(m.deps[0].channel == FAP_CHANNEL_STABLE, "jq dep channel is stable");
+
+    CHECK(fap_manifest_add_dep(tmpfile, "fastfetch", FAP_CHANNEL_STABLE) == 0,
+          "add_dep adds a second package");
+    CHECK(fap_manifest_load(tmpfile, &m) == 0 && m.deps_count == 2,
+          "both packages present after second add");
+
+    CHECK(fap_manifest_add_dep(tmpfile, "jq", FAP_CHANNEL_EDGE) == 0,
+          "re-adding an existing dep succeeds (upsert)");
+    CHECK(fap_manifest_load(tmpfile, &m) == 0 && m.deps_count == 2,
+          "upsert doesn't duplicate the entry");
+    for (int i = 0; i < m.deps_count; i++)
+        if (strcmp(m.deps[i].name, "jq") == 0)
+            CHECK(m.deps[i].channel == FAP_CHANNEL_EDGE, "upsert updated jq's channel to edge");
+
+    CHECK(fap_manifest_remove_dep(tmpfile, "jq") == 0, "remove_dep removes jq");
+    CHECK(fap_manifest_load(tmpfile, &m) == 0 && m.deps_count == 1
+          && strcmp(m.deps[0].name, "fastfetch") == 0,
+          "only fastfetch remains after removing jq");
+
+    CHECK(fap_manifest_remove_dep(tmpfile, "doesnotexist") == 0,
+          "removing a name that isn't in the manifest is a no-op, not an error");
+
+    remove(tmpfile);
+    CHECK(fap_manifest_remove_dep(tmpfile, "jq") == 0,
+          "removing from a manifest that doesn't exist at all is also a no-op");
+}
+
 int main(void)
 {
     printf("config:\n");
@@ -78,6 +119,7 @@ int main(void)
     test_manifest_no_deps();
     test_manifest_missing_package();
     test_manifest_bad_dep_shape();
+    test_manifest_add_remove_dep();
 
     printf("\n%d passed, %d failed\n", pass, fail);
     return fail ? 1 : 0;
