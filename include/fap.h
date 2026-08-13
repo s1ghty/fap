@@ -8,18 +8,33 @@
 #define FAP_VERSION "0.1.0"
 
 /* ── paths ────────────────────────────────────────────────────── */
-#define FAP_ROOT        ".local/fap"
-#define FAP_PKGS        ".local/fap/pkgs"
-#define FAP_STAGING     ".local/fap/staging"
-#define FAP_LIBS        ".local/fap/libs"
-#define FAP_BIN         ".local/bin"
-/* Both live under the install root (resolved via fap_home_path), not
- * the current directory — fap tracks machine-wide state, like a
- * distro package manager, not a per-project dependency file. Running
- * `fap install` from two different directories must see the same
- * manifest/lock, not create a second copy. */
-#define FAP_MANIFEST    ".local/fap/fap.toml"
-#define FAP_LOCK        ".local/fap/fap.lock"
+/* Everything fap manages lives under one root, chosen at runtime by
+ * effective privilege (see fap_root_path()/fap_bin_path() in util.c):
+ *   - root/sudo   -> FAP_SYSTEM_ROOT + FAP_SYSTEM_BIN, machine-wide.
+ *     Deliberately not /usr — that stays untouched so fap never
+ *     contends with the host distro's own package manager over file
+ *     ownership when run as a secondary package manager.
+ *   - anyone else -> FAP_USER_ROOT + FAP_USER_BIN under $HOME,
+ *     unchanged from fap's original per-user design.
+ * The constants below are the sub-paths under whichever root is
+ * active; nothing outside util.c should reference FAP_USER_ROOT/
+ * FAP_SYSTEM_ROOT/FAP_USER_BIN/FAP_SYSTEM_BIN directly — always go
+ * through fap_root_path()/fap_bin_path() so both modes stay in sync. */
+#define FAP_USER_ROOT   ".local/fap"
+#define FAP_USER_BIN    ".local/bin"
+#define FAP_SYSTEM_ROOT "/var/lib/fap"
+#define FAP_SYSTEM_BIN  "/usr/local/bin"
+
+#define FAP_PKGS        "pkgs"
+#define FAP_STAGING     "staging"
+#define FAP_LIBS        "libs"
+/* fap tracks machine-wide state, like a distro package manager, not a
+ * per-project dependency file — running `fap install` from two
+ * different directories (or as two different users under the same
+ * privilege level) must see the same manifest/lock, not create a
+ * second copy. */
+#define FAP_MANIFEST    "fap.toml"
+#define FAP_LOCK        "fap.lock"
 
 /* ── limits ───────────────────────────────────────────────────── */
 #define FAP_MAX_NAME    128
@@ -150,6 +165,22 @@ int fap_sha256_verify(const char *path, const char *expected_hex);
 
 /* util.h    — paths, strings, fs helpers */
 int  fap_home_path(const char *rel, char *buf, size_t bufsz);
+
+/* 1 if fap is running with root privilege (system-wide mode), 0
+ * otherwise (per-user mode). The single source of truth for which
+ * install root is active — see the paths section above. */
+int  fap_is_system_mode(void);
+
+/* Resolves sub (e.g. "pkgs", "fap.lock") under the currently active
+ * root — FAP_SYSTEM_ROOT if running as root, $HOME/FAP_USER_ROOT
+ * otherwise. Pass NULL or "" for sub to get the root itself. */
+int  fap_root_path(const char *sub, char *buf, size_t bufsz);
+
+/* Resolves the bin directory binaries get symlinked/wrapper-scripted
+ * into — FAP_SYSTEM_BIN if running as root, $HOME/FAP_USER_BIN
+ * otherwise. */
+int  fap_bin_path(char *buf, size_t bufsz);
+
 int  fap_mkdir_p(const char *path);
 int  fap_rm_rf(const char *path);
 int  fap_copy_file(const char *src, const char *dst);

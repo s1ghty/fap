@@ -31,13 +31,31 @@ make
 make test
 ```
 
+## System-wide vs. per-user
+
+fap picks its install root at runtime from effective privilege — no flag,
+no env var, just `geteuid() == 0`, the same signal every `sudo <cmd>` vs
+plain `<cmd>` already relies on:
+
+| | Root / `sudo` | Everyone else |
+|---|---|---|
+| Packages | `/var/lib/fap/pkgs/` | `~/.local/fap/pkgs/` |
+| State (`fap.toml`, `fap.lock`, `libs/`) | `/var/lib/fap/` | `~/.local/fap/` |
+| Binaries | `/usr/local/bin/` | `~/.local/bin/` |
+
+System mode deliberately uses `/usr/local`, never `/usr` — that stays
+untouched so fap never contends with the host distro's own package
+manager over file ownership when run alongside it. Everything below
+uses the per-user paths as the example; system mode is the same shape
+rooted at `/var/lib/fap` + `/usr/local/bin` instead.
+
 ## Install dir layout
 
 ```
 ~/.local/
 ├── bin/
-│   ├── curl -> ../fap/pkgs/curl-8.6.0/bin/curl     (plain symlink, no libs)
-│   └── mytool                                       (wrapper script, has libs — see below)
+│   ├── curl -> /home/user/.local/fap/pkgs/curl-8.6.0/bin/curl   (plain symlink, no libs)
+│   └── mytool                                                    (wrapper script, has libs — see below)
 └── fap/
     ├── fap.toml          (declarative manifest, kept in sync by install/remove)
     ├── fap.lock          (exact resolved versions + hashes)
@@ -55,13 +73,20 @@ make test
                 └── libmytool.so.1
 ```
 
-A package with no `libs` gets its binaries symlinked into `~/.local/bin/`
-directly, same as always. A package that declares `libs` gets wrapper
-scripts instead — `~/.local/bin/mytool` is then a small shell script that
-sets `LD_LIBRARY_PATH` to include `~/.local/fap/libs/` before exec'ing the
-real binary in `pkgs/mytool-1.0.0/bin/`. This is because there's no
-per-user way to extend the dynamic linker's search path — `/etc/ld.so.conf.d`
-is system-wide and needs root, which fap's design rules out.
+Symlink/wrapper targets are always **absolute** (never a relative
+`../fap/pkgs/...` path) — in system mode the bin dir and the package
+root aren't siblings the way `~/.local/bin` and `~/.local/fap` are, so
+a relative target would resolve to the wrong place.
+
+A package with no `libs` gets its binaries symlinked into the active bin
+directory directly, same as always. A package that declares `libs` gets
+wrapper scripts instead — `mytool` is then a small shell script that sets
+`LD_LIBRARY_PATH` to include the active `libs/` dir before exec'ing the
+real binary in `pkgs/mytool-1.0.0/bin/`. In user mode this is because
+there's no per-user way to extend the dynamic linker's search path —
+`/etc/ld.so.conf.d` is system-wide and needs root. In system mode fap
+*has* root, so a real `ld.so.conf.d` entry would be more idiomatic there —
+not done yet; wrapper scripts still work correctly in system mode too.
 
 ## Implementation order (recommended for Claude Code sessions)
 
@@ -75,17 +100,19 @@ is system-wide and needs root, which fap's design rules out.
 
 ## Moving to a new machine
 
-`fap.toml` and `fap.lock` both live at `~/.local/fap/` — machine-wide,
-not per-directory. `fap install <pkg>` and `fap remove <pkg>` keep
-`fap.toml` in sync with what you've explicitly asked for (creating it
-with a default `[package]` section the first time, if it didn't
-exist), so running `fap install` from any directory always sees the
-same state instead of scattering a separate manifest/lock into
-whatever folder you happened to be standing in. To reproduce the same
-set of top-level packages elsewhere: copy `~/.local/fap/fap.toml` to
-the new machine and run `fap sync`. Transitive dependencies aren't
-written into it — those get re-resolved from the registry every time,
-same as `pkg.deps` always has.
+`fap.toml` and `fap.lock` both live at the active install root (see
+above) — machine-wide, not per-directory. `fap install <pkg>` and
+`fap remove <pkg>` keep `fap.toml` in sync with what you've explicitly
+asked for (creating it with a default `[package]` section the first
+time, if it didn't exist), so running `fap install` from any directory,
+at the same privilege level, always sees the same state instead of
+scattering a separate manifest/lock into whatever folder you happened
+to be standing in. To reproduce the same set of top-level packages
+elsewhere: copy `fap.toml` to the new machine and run `fap sync` at
+the same privilege level you copied it from (system-wide `fap.toml`
+→ `sudo fap sync`, per-user → plain `fap sync`). Transitive dependencies
+aren't written into it — those get re-resolved from the registry every
+time, same as `pkg.deps` always has.
 
 ## Registry config
 
