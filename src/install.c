@@ -59,11 +59,16 @@ static int verify_present(const char *staging_dir, const char *subdir,
  * libs_root, so every installed package's wrapper scripts can find
  * them via one LD_LIBRARY_PATH entry.
  *
- * ponytail: one flat shared dir, no per-package subdirs or reference
- * counting — two packages bundling a same-named-but-different lib
- * will clobber each other here. Acceptable for now; the fix if it
- * ever bites is per-package lib dirs (like pkgs/) plus a search path
- * built per-binary instead of one global directory. */
+ * ponytail: one flat shared dir, no per-package subdirs — two
+ * packages bundling a same-named-but-different lib will clobber each
+ * other here. Acceptable for now; the fix if it ever bites is
+ * per-package lib dirs (like pkgs/) plus a search path built
+ * per-binary instead of one global directory. Removal-side reference
+ * counting (don't delete a lib another remaining package still
+ * declares) is handled in cli.c's cleanup_orphaned_libs(), using the
+ * libs[] each package already records in fap.lock — this comment is
+ * only about the install-time same-name-different-content clobber
+ * risk, which counting refs on removal doesn't touch. */
 static int install_libs(const FapPackage *pkg, const char *pkg_dir, const char *libs_root)
 {
     if (pkg->libs_count == 0)
@@ -317,8 +322,10 @@ int fap_remove(const char *name)
         closedir(bd);
     }
 
-    /* NOTE: libs copied into the shared ~/.local/fap/libs/ aren't
-     * cleaned up here — see install_libs()'s ponytail note on why
-     * that dir isn't per-package. */
+    /* Shared libs cleanup (deleting libs_root/<lib> if no other
+     * remaining package still needs it) happens one layer up, in
+     * cli.c's cmd_remove — this function only knows the package's
+     * name, not its libs[] list, which lives in fap.lock, not on
+     * disk. */
     return fap_rm_rf(pkg_dir);
 }

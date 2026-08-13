@@ -228,6 +228,17 @@ int fap_rm_rf(const char *path)
             return 0;
         return fap_error("rm_rf: stat %s: %s", path, strerror(errno));
     }
+    /* nftw() on a path that isn't a directory is unreliable across
+     * platforms — confirmed failing outright with ENOTDIR on macOS's
+     * libc, even though every prior caller of this function only ever
+     * passed a directory and never hit it. unlink() directly for the
+     * plain file/symlink case instead of routing it through a
+     * tree-walk API that isn't guaranteed to support it. */
+    if (!S_ISDIR(st.st_mode)) {
+        if (unlink(path) < 0)
+            return fap_error("rm_rf: unlink %s: %s", path, strerror(errno));
+        return 0;
+    }
     if (nftw(path, rm_cb, 16, FTW_DEPTH | FTW_PHYS) < 0)
         return fap_error("rm_rf: %s: %s", path, strerror(errno));
     return 0;
