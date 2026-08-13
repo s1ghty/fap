@@ -4,6 +4,7 @@
 #include <string.h>
 #include <sys/stat.h>
 #include <unistd.h>
+#include <dirent.h>
 #include "fap.h"
 
 /*
@@ -104,6 +105,35 @@ static void lock_remove(FapLock *lock, const char *name)
             lock->entries[i] = lock->entries[lock->count - 1];
             lock->count--;
             return;
+        }
+    }
+}
+
+/* Bundled libs live in one shared flat directory with no per-package
+ * subdirs (see install.c's install_libs) — the only thing standing
+ * between "cleaned up correctly" and "orphaned forever" is checking,
+ * for each lib removed_pkg declared, whether any package still left
+ * in lock also declares it. Best-effort: called after the package is
+ * already gone from both disk and lock, so a failure here just leaves
+ * an unused file behind rather than breaking the actual removal. */
+static void cleanup_orphaned_libs(const FapPackage *removed_pkg, const FapLock *lock, const char *libs_root)
+{
+    for (int i = 0; i < removed_pkg->libs_count; i++) {
+        const char *lib = removed_pkg->libs[i];
+        int still_used = 0;
+        for (int j = 0; j < lock->count && !still_used; j++) {
+            const FapPackage *pkg = &lock->entries[j].pkg;
+            for (int k = 0; k < pkg->libs_count; k++) {
+                if (strcmp(pkg->libs[k], lib) == 0) {
+                    still_used = 1;
+                    break;
+                }
+            }
+        }
+        if (!still_used) {
+            char path[FAP_MAX_PATH];
+            if (snprintf(path, sizeof(path), "%s/%s", libs_root, lib) < (int)sizeof(path))
+                fap_rm_rf(path);
         }
     }
 }
@@ -303,6 +333,10 @@ int cmd_remove(int argc, char **argv)
     if (manifest_path(manifest_p, sizeof(manifest_p)) < 0)
         return -1;
 
+    char libs_root[FAP_MAX_PATH];
+    if (fap_root_path(FAP_LIBS, libs_root, sizeof(libs_root)) < 0)
+        return -1;
+
     FapLock *lock = malloc(sizeof(FapLock));
     if (!lock)
         return fap_error("out of memory");
@@ -311,6 +345,20 @@ int cmd_remove(int argc, char **argv)
 
     for (int i = 1; rc == 0 && i < argc; i++) {
         printf("removing %s...\n", argv[i]);
+
+        /* Grab what this package declared before it's gone from lock,
+         * so cleanup_orphaned_libs can check the *remaining* entries
+         * afterward without needing a separate pre/post snapshot. */
+        FapPackage removed_pkg;
+        int had_entry = 0;
+        for (int j = 0; j < lock->count; j++) {
+            if (strcmp(lock->entries[j].pkg.name, argv[i]) == 0) {
+                removed_pkg = lock->entries[j].pkg;
+                had_entry = 1;
+                break;
+            }
+        }
+
         rc = fap_remove(argv[i]);
         if (rc == 0) {
             any_removed = 1;
@@ -318,6 +366,8 @@ int cmd_remove(int argc, char **argv)
         }
         if (rc == 0)
             rc = fap_manifest_remove_dep(manifest_p, argv[i]);
+        if (rc == 0 && had_entry)
+            cleanup_orphaned_libs(&removed_pkg, lock, libs_root);
     }
 
     if (rc == 0 && any_removed && isatty(STDOUT_FILENO))
@@ -548,6 +598,37 @@ static void print_info(const FapPackage *pkg)
     printf("\n");
 }
 
+/* Lists every file under dir, recursively, printed relative to
+ * whatever the caller considers the package root. No manifest to
+ * consult — a package's own install directory is exclusively its
+ * own (see fap_install/fap_remove), so the filesystem itself is
+ * always the authoritative, up-to-date answer to "what does this
+ * package actually contain," nothing separate to keep in sync. */
+static void print_files_recursive(const char *dir, const char *rel_prefix)
+{
+    DIR *d = opendir(dir);
+    if (!d)
+        return;
+    struct dirent *ent;
+    while ((ent = readdir(d)) != NULL) {
+        if (ent->d_name[0] == '.')
+            continue;
+        char path[FAP_MAX_PATH], rel[FAP_MAX_PATH];
+        if (snprintf(path, sizeof(path), "%s/%s", dir, ent->d_name) >= (int)sizeof(path))
+            continue;
+        if (snprintf(rel, sizeof(rel), "%s%s%s", rel_prefix, rel_prefix[0] ? "/" : "", ent->d_name) >= (int)sizeof(rel))
+            continue;
+        struct stat st;
+        if (lstat(path, &st) < 0)
+            continue;
+        if (S_ISDIR(st.st_mode))
+            print_files_recursive(path, rel);
+        else
+            printf("  %s\n", rel);
+    }
+    closedir(d);
+}
+
 static void print_install_state(const char *name)
 {
     FapLock *lock = malloc(sizeof(FapLock));
@@ -558,8 +639,11 @@ static void print_install_state(const char *name)
             if (strcmp(lock->entries[i].pkg.name, name) != 0)
                 continue;
             char path[FAP_MAX_PATH];
-            if (pkg_install_path(&lock->entries[i].pkg, path, sizeof(path)) == 0)
+            if (pkg_install_path(&lock->entries[i].pkg, path, sizeof(path)) == 0) {
                 printf("installed:   %s (%s)\n", lock->entries[i].pkg.version, path);
+                printf("files:\n");
+                print_files_recursive(path, "");
+            }
             break;
         }
     }
