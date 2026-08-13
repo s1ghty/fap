@@ -190,6 +190,13 @@ int  fap_is_system_mode(void);
  * otherwise. Pass NULL or "" for sub to get the root itself. */
 int  fap_root_path(const char *sub, char *buf, size_t bufsz);
 
+/* Same as fap_root_path(), but resolves under the *other* mode's root
+ * than the one currently active. Diagnostic-only — e.g. so `fap
+ * remove` can tell you a package exists but was installed at the
+ * other privilege level, instead of just claiming it isn't installed
+ * at all. Never used for actual reads or writes. */
+int  fap_other_root_path(const char *sub, char *buf, size_t bufsz);
+
 /* Resolves the bin directory binaries get symlinked/wrapper-scripted
  * into — FAP_SYSTEM_BIN if running as root, $HOME/FAP_USER_BIN
  * otherwise. */
