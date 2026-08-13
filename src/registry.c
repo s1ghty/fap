@@ -164,7 +164,7 @@ int fap_index_fetch(FapChannel channel, FapIndex *out)
     curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &status);
     curl_easy_cleanup(curl);
 
-    if (status != 200) {
+    if (status != 0 && status != 200) {
         free(buf.data);
         return fap_error("registry: %s returned HTTP %ld", url, status);
     }
