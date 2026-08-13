@@ -131,6 +131,20 @@ int fap_lock_load(const char *path, FapLock *out);
 int fap_lock_save(const char *path, const FapLock *lock);
 
 /* registry.h — fetch + parse channel index */
+
+/* Baked-in default for the stable channel — fap's own registry, so
+ * `fap install`/`search`/etc. work with zero configuration.
+ * FAP_STABLE_INDEX_URL still overrides it, e.g. for a private/custom
+ * registry. No default for edge: no edge.json exists in the registry
+ * yet, so defaulting it would just point at a 404 — FAP_EDGE_INDEX_URL
+ * is required until one does. */
+#define FAP_DEFAULT_STABLE_INDEX_URL "https://raw.githubusercontent.com/s1ghty/fap-registry/main/stable.json"
+
+/* Effective index URL for channel: the FAP_*_INDEX_URL env var if
+ * set, else fap's own default for stable. NULL if the channel has
+ * neither (always true for edge, until it gets a default too). */
+const char *fap_channel_index_url(FapChannel channel);
+
 int fap_index_fetch(FapChannel channel, FapIndex *out);
 int fap_index_find(const FapIndex *idx, const char *name,
                    const char *version, FapPackage *out);
