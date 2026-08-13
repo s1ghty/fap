@@ -3,6 +3,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
+#include <unistd.h>
 #include "fap.h"
 
 /*
@@ -151,6 +152,7 @@ static void remove_old_version(const char *name, const char *old_version)
 static int install_resolved(const FapIndex *resolved, FapLock *lock)
 {
     int rc = 0;
+    int any_installed = 0;
     for (int i = 0; rc == 0 && i < resolved->count; i++) {
         const FapPackage *pkg = &resolved->pkgs[i];
 
@@ -169,6 +171,8 @@ static int install_resolved(const FapIndex *resolved, FapLock *lock)
             fap_channel_str(pkg->channel, chan_str, sizeof(chan_str));
             printf("installing %s %s (%s)...\n", pkg->name, pkg->version, chan_str);
             rc = fap_install(pkg);
+            if (rc == 0)
+                any_installed = 1;
         }
 
         if (rc == 0)
@@ -176,6 +180,13 @@ static int install_resolved(const FapIndex *resolved, FapLock *lock)
         if (rc == 0 && old_version[0] && strcmp(old_version, pkg->version) != 0)
             remove_old_version(pkg->name, old_version);
     }
+    /* A shell that already tried (and failed to find, or found a
+     * different) command by this name caches that lookup — nothing a
+     * child process like fap can clear on its parent shell's behalf,
+     * but at least worth flagging instead of leaving it a mystery.
+     * isatty-gated so scripted/piped use doesn't get extra noise. */
+    if (rc == 0 && any_installed && isatty(STDOUT_FILENO))
+        printf("note: if a just-installed command isn't found right away, run: hash -r\n");
     return rc;
 }
 
@@ -296,15 +307,21 @@ int cmd_remove(int argc, char **argv)
     if (!lock)
         return fap_error("out of memory");
     int rc = load_lock(lock);
+    int any_removed = 0;
 
     for (int i = 1; rc == 0 && i < argc; i++) {
         printf("removing %s...\n", argv[i]);
         rc = fap_remove(argv[i]);
-        if (rc == 0)
+        if (rc == 0) {
+            any_removed = 1;
             lock_remove(lock, argv[i]);
+        }
         if (rc == 0)
             rc = fap_manifest_remove_dep(manifest_p, argv[i]);
     }
+
+    if (rc == 0 && any_removed && isatty(STDOUT_FILENO))
+        printf("note: if a just-removed command still resolves, run: hash -r\n");
 
     if (rc == 0)
         rc = save_lock(lock);
