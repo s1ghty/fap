@@ -10,11 +10,11 @@
  * index format") via libcurl. Parsing reuses json.c's flat scanning
  * helpers, same as lock.c.
  *
- * Index URLs aren't a settled part of this project yet (cli.c's
- * cmd_channels notes "URLs will come from a config file or compiled-in
- * defaults") — for now they're read from FAP_STABLE_INDEX_URL /
- * FAP_EDGE_INDEX_URL so nothing here hardcodes a registry that doesn't
- * exist.
+ * stable defaults to fap's own registry (FAP_DEFAULT_STABLE_INDEX_URL)
+ * so fap works with zero configuration; FAP_STABLE_INDEX_URL still
+ * overrides it for a private/custom registry. edge has no default —
+ * no edge.json exists in the registry yet, so defaulting it would
+ * just point at a 404 — FAP_EDGE_INDEX_URL is required until one does.
  */
 
 struct fetch_buf {
@@ -36,15 +36,23 @@ static size_t write_cb(char *ptr, size_t size, size_t nmemb, void *userdata)
     return add;
 }
 
+const char *fap_channel_index_url(FapChannel channel)
+{
+    const char *env = getenv(channel == FAP_CHANNEL_EDGE
+                              ? "FAP_EDGE_INDEX_URL" : "FAP_STABLE_INDEX_URL");
+    if (env && *env)
+        return env;
+    return channel == FAP_CHANNEL_STABLE ? FAP_DEFAULT_STABLE_INDEX_URL : NULL;
+}
+
 static int index_url(FapChannel channel, char *buf, size_t bufsz)
 {
-    const char *env = (channel == FAP_CHANNEL_EDGE)
-        ? "FAP_EDGE_INDEX_URL" : "FAP_STABLE_INDEX_URL";
-    const char *url = getenv(env);
-    if (!url || !*url)
-        return fap_error("registry: no index URL configured for this channel; set %s", env);
+    const char *url = fap_channel_index_url(channel);
+    if (!url)
+        return fap_error("registry: no index URL configured for this channel; set %s",
+                          channel == FAP_CHANNEL_EDGE ? "FAP_EDGE_INDEX_URL" : "FAP_STABLE_INDEX_URL");
     if ((size_t)snprintf(buf, bufsz, "%s", url) >= bufsz)
-        return fap_error("registry: %s is too long", env);
+        return fap_error("registry: index URL is too long");
     return 0;
 }
 

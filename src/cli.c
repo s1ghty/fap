@@ -446,9 +446,9 @@ int cmd_search(int argc, char **argv)
     if (argc < 2)
         return fap_error("search: provide a query");
 
-    const char *stable_url = getenv("FAP_STABLE_INDEX_URL");
-    const char *edge_url = getenv("FAP_EDGE_INDEX_URL");
-    if (!(stable_url && *stable_url) && !(edge_url && *edge_url))
+    const char *stable_url = fap_channel_index_url(FAP_CHANNEL_STABLE);
+    const char *edge_url = fap_channel_index_url(FAP_CHANNEL_EDGE);
+    if (!stable_url && !edge_url)
         return fap_error("search: no channels configured; set FAP_STABLE_INDEX_URL and/or FAP_EDGE_INDEX_URL");
 
     FapIndex *stable = malloc(sizeof(FapIndex));
@@ -461,15 +461,16 @@ int cmd_search(int argc, char **argv)
 
     /* Search whichever channels are configured; a channel with no
      * index URL set is skipped, not treated as an error (fap_channels
-     * shows the same "not configured" state as normal). */
+     * shows the same "not configured" state as normal). stable always
+     * has one — see FAP_DEFAULT_STABLE_INDEX_URL. */
     int rc = 0;
     int found = 0;
-    if (stable_url && *stable_url) {
+    if (stable_url) {
         rc = fap_index_fetch(FAP_CHANNEL_STABLE, stable);
         if (rc == 0)
             found += search_index(stable, argv[1]);
     }
-    if (rc == 0 && edge_url && *edge_url) {
+    if (rc == 0 && edge_url) {
         rc = fap_index_fetch(FAP_CHANNEL_EDGE, edge);
         if (rc == 0)
             found += search_index(edge, argv[1]);
@@ -587,9 +588,10 @@ int cmd_info(int argc, char **argv)
 int cmd_channels(int argc, char **argv)
 {
     (void)argc; (void)argv;
-    const char *stable_url = getenv("FAP_STABLE_INDEX_URL");
-    const char *edge_url = getenv("FAP_EDGE_INDEX_URL");
-    printf("stable  %s\n", stable_url && *stable_url ? stable_url : "(not configured, set FAP_STABLE_INDEX_URL)");
-    printf("edge    %s\n", edge_url && *edge_url ? edge_url : "(not configured, set FAP_EDGE_INDEX_URL)");
+    const char *stable_env = getenv("FAP_STABLE_INDEX_URL");
+    printf("stable  %s%s\n", fap_channel_index_url(FAP_CHANNEL_STABLE),
+           (stable_env && *stable_env) ? "" : "  (default — override with FAP_STABLE_INDEX_URL)");
+    const char *edge_url = fap_channel_index_url(FAP_CHANNEL_EDGE);
+    printf("edge    %s\n", edge_url ? edge_url : "(not configured, set FAP_EDGE_INDEX_URL)");
     return 0;
 }

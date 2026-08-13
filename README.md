@@ -116,11 +116,14 @@ time, same as `pkg.deps` always has.
 
 ## Registry config
 
-Channel index URLs aren't hardcoded — set `FAP_STABLE_INDEX_URL` /
-`FAP_EDGE_INDEX_URL` before running `fap search`, `install`, `sync`,
-`update`, or `info`. `fap channels` shows what's currently configured.
-Only one channel needs to be set; commands that check both (like
-`fap search`) just skip whichever one isn't configured.
+`stable` works out of the box, no setup needed — it defaults to fap's
+own registry (`FAP_DEFAULT_STABLE_INDEX_URL` in `fap.h`). Set
+`FAP_STABLE_INDEX_URL` to point at a different one instead (a private
+or self-hosted registry, for example). `edge` has no default yet — no
+`edge.json` exists in the registry — so `FAP_EDGE_INDEX_URL` is
+required until one does. `fap channels` shows what's actually in
+effect for both. Commands that check both channels (like `fap search`)
+just skip whichever one isn't configured, rather than erroring.
 
 ## Timing
 
