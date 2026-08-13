@@ -188,8 +188,9 @@ int main(void)
     char linktarget[256] = {0};
     ssize_t n = readlink("/tmp/fap_test_install_home/.local/bin/tool", linktarget, sizeof(linktarget) - 1);
     CHECK(n > 0, "bin/ symlink created");
-    CHECK(n > 0 && strcmp(linktarget, "../fap/pkgs/tool-1.0/bin/tool") == 0,
-          "symlink points at ../fap/pkgs/<name>-<version>/bin/<bin>");
+    CHECK(n > 0 && strcmp(linktarget, "/tmp/fap_test_install_home/.local/fap/pkgs/tool-1.0/bin/tool") == 0,
+          "symlink target is absolute (not a relative ../fap/pkgs/... path — "
+          "system mode's bin dir and pkgs root aren't siblings)");
 
     FILE *f = fopen("/tmp/fap_test_install_home/.local/bin/tool", "rb");
     char buf[128] = {0};

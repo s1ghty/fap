@@ -2,10 +2,17 @@ CC      = gcc
 CFLAGS  = -std=c99 -Wall -Wextra -Wpedantic -Iinclude -Ivendor
 LDFLAGS = -lcurl -lzstd -lcrypto
 
-# Default to a per-user install, matching fap's own "no superuser
-# required" design — override for a system-wide install, e.g.
-# `make install PREFIX=/usr/local` (with sudo).
+# Defaults to a per-user install; run via sudo (or as root) and it
+# defaults to a system-wide install instead, matching fap's own
+# dual-mode design (see CLAUDE.md's "Install root" bullet) — the
+# fap binary itself ends up wherever fap-installed packages will
+# look for their own bin dir. Override either way with
+# `make install PREFIX=/some/other/path`.
+ifeq ($(shell id -u),0)
+PREFIX  ?= /usr/local
+else
 PREFIX  ?= $(HOME)/.local
+endif
 BINDIR  = $(PREFIX)/bin
 
 SRC = src/main.c \
@@ -37,6 +44,7 @@ $(BIN): $(OBJ)
 install: $(BIN)
 	install -d $(BINDIR)
 	install -m 755 $(BIN) $(BINDIR)/$(BIN)
+ifneq ($(shell id -u),0)
 	@case ":$$PATH:" in \
 		*":$(BINDIR):"*) ;; \
 		*) \
@@ -56,6 +64,7 @@ install: $(BIN)
 				echo "note: added $(BINDIR) to PATH in $$rc — restart your shell or run: source $$rc"; \
 			fi ;; \
 	esac
+endif
 
 uninstall:
 	rm -f $(BINDIR)/$(BIN)

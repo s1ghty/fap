@@ -31,6 +31,42 @@ int fap_home_path(const char *rel, char *buf, size_t bufsz)
     return 0;
 }
 
+int fap_is_system_mode(void)
+{
+    return geteuid() == 0;
+}
+
+int fap_root_path(const char *sub, char *buf, size_t bufsz)
+{
+    if (fap_is_system_mode()) {
+        int n = (sub && *sub)
+            ? snprintf(buf, bufsz, "%s/%s", FAP_SYSTEM_ROOT, sub)
+            : snprintf(buf, bufsz, "%s", FAP_SYSTEM_ROOT);
+        if (n < 0 || (size_t)n >= bufsz)
+            return fap_error("path too long: %s/%s", FAP_SYSTEM_ROOT, sub ? sub : "");
+        return 0;
+    }
+
+    char rel[FAP_MAX_PATH];
+    int n = (sub && *sub)
+        ? snprintf(rel, sizeof(rel), "%s/%s", FAP_USER_ROOT, sub)
+        : snprintf(rel, sizeof(rel), "%s", FAP_USER_ROOT);
+    if (n < 0 || (size_t)n >= sizeof(rel))
+        return fap_error("path too long: %s/%s", FAP_USER_ROOT, sub ? sub : "");
+    return fap_home_path(rel, buf, bufsz);
+}
+
+int fap_bin_path(char *buf, size_t bufsz)
+{
+    if (fap_is_system_mode()) {
+        int n = snprintf(buf, bufsz, "%s", FAP_SYSTEM_BIN);
+        if (n < 0 || (size_t)n >= bufsz)
+            return fap_error("path too long: %s", FAP_SYSTEM_BIN);
+        return 0;
+    }
+    return fap_home_path(FAP_USER_BIN, buf, bufsz);
+}
+
 /* mkdir -p: create all intermediate dirs */
 int fap_mkdir_p(const char *path)
 {

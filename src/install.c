@@ -10,7 +10,9 @@
 /*
  * install.c — atomic install via staging directory + symlinks
  *
- * Flow:
+ * Flow (paths below shown for user mode; fap_root_path()/fap_bin_path()
+ * resolve to the system-wide root instead when running as root — see
+ * fap.h):
  *   1. Extract tarball into ~/.local/fap/staging/<name>-<version>/
  *      (fap_package_download does download + SHA256 verify + extract)
  *   2. Verify all expected binaries and bundled libs are present
@@ -25,9 +27,11 @@
  * rename() is atomic on the same filesystem, so a crash anywhere
  * before step 3 leaves ~/.local/fap/pkgs/ untouched.
  *
- * ~/.local/bin/ and ~/.local/fap/pkgs/ are fixed siblings under
- * ~/.local/ (see fap.h), so a binary symlink's relative target is
- * always "../fap/pkgs/<name>-<version>/bin/<binary>".
+ * Symlink/wrapper targets are always absolute, never relative — in
+ * system mode the bin dir (/usr/local/bin) and the package root
+ * (/var/lib/fap) aren't siblings the way ~/.local/bin and
+ * ~/.local/fap are, so a relative "../fap/pkgs/..." target would
+ * resolve to the wrong place.
  */
 
 static int pkg_dirname(const FapPackage *pkg, char *buf, size_t bufsz)
@@ -114,7 +118,7 @@ static int write_wrapper(const char *link, const char *real_bin, const char *lib
 }
 
 static int install_bins(const FapPackage *pkg, const char *pkg_dir,
-                         const char *dirname, const char *bin_root, const char *libs_root)
+                         const char *bin_root, const char *libs_root)
 {
     for (int i = 0; i < pkg->bins_count; i++) {
         char link[FAP_MAX_PATH];
@@ -122,19 +126,16 @@ static int install_bins(const FapPackage *pkg, const char *pkg_dir,
         if (n < 0 || (size_t)n >= sizeof(link))
             return fap_error("install: symlink path too long");
 
+        char real_bin[FAP_MAX_PATH];
+        n = snprintf(real_bin, sizeof(real_bin), "%s/bin/%s", pkg_dir, pkg->bins[i]);
+        if (n < 0 || (size_t)n >= sizeof(real_bin))
+            return fap_error("install: binary path too long");
+
         if (pkg->libs_count > 0) {
-            char real_bin[FAP_MAX_PATH];
-            n = snprintf(real_bin, sizeof(real_bin), "%s/bin/%s", pkg_dir, pkg->bins[i]);
-            if (n < 0 || (size_t)n >= sizeof(real_bin))
-                return fap_error("install: binary path too long");
             if (write_wrapper(link, real_bin, libs_root) < 0)
                 return -1;
         } else {
-            char target[FAP_MAX_PATH];
-            n = snprintf(target, sizeof(target), "../fap/pkgs/%s/bin/%s", dirname, pkg->bins[i]);
-            if (n < 0 || (size_t)n >= sizeof(target))
-                return fap_error("install: symlink target too long");
-            if (fap_symlink_force(target, link) < 0)
+            if (fap_symlink_force(real_bin, link) < 0)
                 return -1;
         }
     }
@@ -147,12 +148,15 @@ int fap_install(const FapPackage *pkg)
     if (pkg_dirname(pkg, dirname, sizeof(dirname)) < 0)
         return -1;
 
+    /* staging and pkgs must resolve under the same root for rename()
+     * to be an atomic same-filesystem move — fap_root_path() guarantees
+     * that in both user and system mode. */
     char staging_root[FAP_MAX_PATH], pkgs_root[FAP_MAX_PATH];
     char bin_root[FAP_MAX_PATH], libs_root[FAP_MAX_PATH];
-    if (fap_home_path(FAP_STAGING, staging_root, sizeof(staging_root)) < 0 ||
-        fap_home_path(FAP_PKGS, pkgs_root, sizeof(pkgs_root)) < 0 ||
-        fap_home_path(FAP_BIN, bin_root, sizeof(bin_root)) < 0 ||
-        fap_home_path(FAP_LIBS, libs_root, sizeof(libs_root)) < 0)
+    if (fap_root_path(FAP_STAGING, staging_root, sizeof(staging_root)) < 0 ||
+        fap_root_path(FAP_PKGS, pkgs_root, sizeof(pkgs_root)) < 0 ||
+        fap_bin_path(bin_root, sizeof(bin_root)) < 0 ||
+        fap_root_path(FAP_LIBS, libs_root, sizeof(libs_root)) < 0)
         return -1;
 
     char staging_dir[FAP_MAX_PATH], pkg_dir[FAP_MAX_PATH];
@@ -205,14 +209,16 @@ int fap_install(const FapPackage *pkg)
     if (fap_mkdir_p(bin_root) < 0)
         return -1;
 
-    return install_bins(pkg, pkg_dir, dirname, bin_root, libs_root);
+    return install_bins(pkg, pkg_dir, bin_root, libs_root);
 }
 
-/* A bin/ entry belongs to dirname's package if it's a plain symlink
- * pointing at rel_prefix ("../fap/pkgs/<dirname>/..."), or — for a
- * libs wrapper script, which isn't a symlink — a regular file whose
- * content references abs_pkg_dir. */
-static int bin_belongs_to(const char *link_path, const char *rel_prefix, const char *abs_pkg_dir)
+/* A bin/ entry belongs to abs_pkg_dir's package if it's a plain
+ * symlink pointing inside it, or — for a libs wrapper script, which
+ * isn't a symlink — a regular file whose content references it.
+ * Both symlink targets and wrapper script content are always
+ * absolute (see the file header comment on why), so one prefix/substring
+ * check covers both cases. */
+static int bin_belongs_to(const char *link_path, const char *abs_pkg_dir)
 {
     struct stat st;
     if (lstat(link_path, &st) < 0)
@@ -224,7 +230,7 @@ static int bin_belongs_to(const char *link_path, const char *rel_prefix, const c
         if (r < 0)
             return 0;
         target[r] = '\0';
-        return strncmp(target, rel_prefix, strlen(rel_prefix)) == 0;
+        return strncmp(target, abs_pkg_dir, strlen(abs_pkg_dir)) == 0;
     }
 
     if (S_ISREG(st.st_mode)) {
@@ -244,8 +250,8 @@ static int bin_belongs_to(const char *link_path, const char *rel_prefix, const c
 int fap_remove(const char *name)
 {
     char pkgs_root[FAP_MAX_PATH], bin_root[FAP_MAX_PATH];
-    if (fap_home_path(FAP_PKGS, pkgs_root, sizeof(pkgs_root)) < 0 ||
-        fap_home_path(FAP_BIN, bin_root, sizeof(bin_root)) < 0)
+    if (fap_root_path(FAP_PKGS, pkgs_root, sizeof(pkgs_root)) < 0 ||
+        fap_bin_path(bin_root, sizeof(bin_root)) < 0)
         return -1;
 
     size_t namelen = strlen(name);
@@ -272,12 +278,9 @@ int fap_remove(const char *name)
         return fap_error("remove: package \"%s\" not installed", name);
 
     /* remove only the bin/ entries that belong to this package dir */
-    char rel_prefix[FAP_MAX_PATH], abs_pkg_dir[FAP_MAX_PATH];
-    int n = snprintf(rel_prefix, sizeof(rel_prefix), "../fap/pkgs/%s/", dirname);
-    if (n < 0 || (size_t)n >= sizeof(rel_prefix))
-        return fap_error("remove: path too long");
-    n = snprintf(abs_pkg_dir, sizeof(abs_pkg_dir), "%s/%s", pkgs_root, dirname);
-    if (n < 0 || (size_t)n >= sizeof(abs_pkg_dir))
+    char pkg_dir[FAP_MAX_PATH];
+    int n = snprintf(pkg_dir, sizeof(pkg_dir), "%s/%s", pkgs_root, dirname);
+    if (n < 0 || (size_t)n >= sizeof(pkg_dir))
         return fap_error("remove: path too long");
 
     DIR *bd = opendir(bin_root);
@@ -288,16 +291,11 @@ int fap_remove(const char *name)
             char link_path[FAP_MAX_PATH];
             if (snprintf(link_path, sizeof(link_path), "%s/%s", bin_root, ent->d_name) >= (int)sizeof(link_path))
                 continue;
-            if (bin_belongs_to(link_path, rel_prefix, abs_pkg_dir))
+            if (bin_belongs_to(link_path, pkg_dir))
                 unlink(link_path);
         }
         closedir(bd);
     }
-
-    char pkg_dir[FAP_MAX_PATH];
-    n = snprintf(pkg_dir, sizeof(pkg_dir), "%s/%s", pkgs_root, dirname);
-    if (n < 0 || (size_t)n >= sizeof(pkg_dir))
-        return fap_error("remove: path too long");
 
     /* NOTE: libs copied into the shared ~/.local/fap/libs/ aren't
      * cleaned up here — see install_libs()'s ponytail note on why

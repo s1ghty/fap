@@ -49,12 +49,12 @@ static void cache_free(IndexCache *c)
 
 static int lock_path(char *buf, size_t bufsz)
 {
-    return fap_home_path(FAP_LOCK, buf, bufsz);
+    return fap_root_path(FAP_LOCK, buf, bufsz);
 }
 
 static int manifest_path(char *buf, size_t bufsz)
 {
-    return fap_home_path(FAP_MANIFEST, buf, bufsz);
+    return fap_root_path(FAP_MANIFEST, buf, bufsz);
 }
 
 /* fap.lock not existing yet is not an error — it just means nothing
@@ -110,7 +110,7 @@ static void lock_remove(FapLock *lock, const char *name)
 static int pkg_install_path(const FapPackage *pkg, char *buf, size_t bufsz)
 {
     char root[FAP_MAX_PATH];
-    if (fap_home_path(FAP_PKGS, root, sizeof(root)) < 0)
+    if (fap_root_path(FAP_PKGS, root, sizeof(root)) < 0)
         return -1;
     int n = snprintf(buf, bufsz, "%s/%s-%s", root, pkg->name, pkg->version);
     if (n < 0 || (size_t)n >= bufsz)
@@ -134,7 +134,7 @@ static int is_installed(const FapPackage *pkg)
 static void remove_old_version(const char *name, const char *old_version)
 {
     char root[FAP_MAX_PATH], dir[FAP_MAX_PATH];
-    if (fap_home_path(FAP_PKGS, root, sizeof(root)) < 0)
+    if (fap_root_path(FAP_PKGS, root, sizeof(root)) < 0)
         return;
     if (snprintf(dir, sizeof(dir), "%s/%s-%s", root, name, old_version) >= (int)sizeof(dir))
         return;
