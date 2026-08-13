@@ -56,6 +56,35 @@ int fap_root_path(const char *sub, char *buf, size_t bufsz)
     return fap_home_path(rel, buf, bufsz);
 }
 
+/* ponytail: when called from a root process, "the other mode" means
+ * resolving under $HOME — but sudo normally resets $HOME to the
+ * target user's (/root), not the original invoking user's. This can
+ * point at the wrong home dir when checked from root. The direction
+ * that actually matters (plain, non-root fap checking whether
+ * something's installed system-wide) doesn't have this problem at
+ * all, since system paths are fixed and don't involve $HOME. Fix if
+ * the root-checking-user-mode direction ever needs to be accurate:
+ * look up SUDO_USER's real home via getpwnam() instead of $HOME. */
+int fap_other_root_path(const char *sub, char *buf, size_t bufsz)
+{
+    if (fap_is_system_mode()) {
+        char rel[FAP_MAX_PATH];
+        int n = (sub && *sub)
+            ? snprintf(rel, sizeof(rel), "%s/%s", FAP_USER_ROOT, sub)
+            : snprintf(rel, sizeof(rel), "%s", FAP_USER_ROOT);
+        if (n < 0 || (size_t)n >= sizeof(rel))
+            return fap_error("path too long: %s/%s", FAP_USER_ROOT, sub ? sub : "");
+        return fap_home_path(rel, buf, bufsz);
+    }
+
+    int n = (sub && *sub)
+        ? snprintf(buf, bufsz, "%s/%s", FAP_SYSTEM_ROOT, sub)
+        : snprintf(buf, bufsz, "%s", FAP_SYSTEM_ROOT);
+    if (n < 0 || (size_t)n >= bufsz)
+        return fap_error("path too long: %s/%s", FAP_SYSTEM_ROOT, sub ? sub : "");
+    return 0;
+}
+
 int fap_bin_path(char *buf, size_t bufsz)
 {
     if (fap_is_system_mode()) {

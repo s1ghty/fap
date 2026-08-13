@@ -247,6 +247,31 @@ static int bin_belongs_to(const char *link_path, const char *abs_pkg_dir)
     return 0;
 }
 
+/* Scans pkgs_root for a directory named "<name>-<anything>"; copies
+ * it into dirname_out if found. A missing/unreadable pkgs_root just
+ * means not found, same as no matching entry. */
+static int find_pkg_dirname(const char *pkgs_root, const char *name,
+                             char *dirname_out, size_t dirname_sz)
+{
+    DIR *d = opendir(pkgs_root);
+    if (!d)
+        return 0;
+    size_t namelen = strlen(name);
+    struct dirent *ent;
+    int found = 0;
+    while ((ent = readdir(d)) != NULL) {
+        if (ent->d_name[0] == '.')
+            continue;
+        if (strncmp(ent->d_name, name, namelen) == 0 && ent->d_name[namelen] == '-') {
+            snprintf(dirname_out, dirname_sz, "%s", ent->d_name);
+            found = 1;
+            break;
+        }
+    }
+    closedir(d);
+    return found;
+}
+
 int fap_remove(const char *name)
 {
     char pkgs_root[FAP_MAX_PATH], bin_root[FAP_MAX_PATH];
@@ -254,28 +279,22 @@ int fap_remove(const char *name)
         fap_bin_path(bin_root, sizeof(bin_root)) < 0)
         return -1;
 
-    size_t namelen = strlen(name);
     char dirname[FAP_MAX_NAME + FAP_MAX_VERSION + 2] = { 0 };
 
-    DIR *d = opendir(pkgs_root);
-    if (!d) {
-        if (errno == ENOENT)
-            return fap_error("remove: package \"%s\" not installed", name);
-        return fap_error("remove: open %s: %s", pkgs_root, strerror(errno));
-    }
-    struct dirent *ent;
-    while ((ent = readdir(d)) != NULL) {
-        if (ent->d_name[0] == '.')
-            continue;
-        if (strncmp(ent->d_name, name, namelen) == 0 && ent->d_name[namelen] == '-') {
-            snprintf(dirname, sizeof(dirname), "%s", ent->d_name);
-            break;
+    if (!find_pkg_dirname(pkgs_root, name, dirname, sizeof(dirname))) {
+        /* Not installed at this privilege level — but maybe it's
+         * installed at the other one, which is a much more useful
+         * thing to tell you than a flat "not installed" you know is
+         * wrong because you just installed it a minute ago. */
+        char other_pkgs_root[FAP_MAX_PATH], other_dirname[FAP_MAX_NAME + FAP_MAX_VERSION + 2] = { 0 };
+        if (fap_other_root_path(FAP_PKGS, other_pkgs_root, sizeof(other_pkgs_root)) == 0 &&
+            find_pkg_dirname(other_pkgs_root, name, other_dirname, sizeof(other_dirname))) {
+            return fap_is_system_mode()
+                ? fap_error("remove: \"%s\" is installed for a regular user, not system-wide — run without sudo to remove it", name)
+                : fap_error("remove: \"%s\" is installed system-wide, not for your user — run with sudo to remove it", name);
         }
-    }
-    closedir(d);
-
-    if (dirname[0] == '\0')
         return fap_error("remove: package \"%s\" not installed", name);
+    }
 
     /* remove only the bin/ entries that belong to this package dir */
     char pkg_dir[FAP_MAX_PATH];
@@ -283,6 +302,7 @@ int fap_remove(const char *name)
     if (n < 0 || (size_t)n >= sizeof(pkg_dir))
         return fap_error("remove: path too long");
 
+    struct dirent *ent;
     DIR *bd = opendir(bin_root);
     if (bd) {
         while ((ent = readdir(bd)) != NULL) {
