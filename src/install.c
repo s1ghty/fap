@@ -14,7 +14,11 @@
  * resolve to the system-wide root instead when running as root — see
  * fap.h):
  *   1. Extract tarball into ~/.local/fap/staging/<name>-<version>/
- *      (fap_package_download does download + SHA256 verify + extract)
+ *      (fap_package_download does download + SHA256 verify + extract —
+ *      the WHOLE tarball, not just bin/lib; a package with a real
+ *      directory tree of resources, like neovim's share/nvim/runtime/
+ *      or Firefox's bundled locale/plugin files, gets all of it, since
+ *      extract_tar in package.c has never filtered by path)
  *   2. Verify all expected binaries and bundled libs are present
  *   3. rename() staging dir to ~/.local/fap/pkgs/<name>-<version>/
  *   4. Copy any bundled .so files (pkg->libs) into ~/.local/fap/libs/
@@ -31,7 +35,17 @@
  * system mode the bin dir (/usr/local/bin) and the package root
  * (/var/lib/fap) aren't siblings the way ~/.local/bin and
  * ~/.local/fap are, so a relative "../fap/pkgs/..." target would
- * resolve to the wrong place.
+ * resolve to the wrong place. This also happens to be exactly what
+ * lets self-locating apps work with zero extra mechanism: both glibc's
+ * ld.so ($ORIGIN in an RPATH) and well-behaved binaries that look up
+ * their own resources (neovim's VIMRUNTIME search, Firefox's GRE
+ * directory) resolve their location via /proc/self/exe, which the
+ * kernel always reports as the final canonical path regardless of how
+ * many symlinks were followed to launch it — so a package's binary
+ * finds its sibling files (share/, lib/, whatever it shipped with)
+ * exactly as if it had been run directly from its real pkgs/<name>-
+ * <version>/ directory, without fap needing to know or care about the
+ * relationship between the binary and its resources.
  */
 
 static int pkg_dirname(const FapPackage *pkg, char *buf, size_t bufsz)
@@ -42,16 +56,58 @@ static int pkg_dirname(const FapPackage *pkg, char *buf, size_t bufsz)
     return 0;
 }
 
-static int verify_present(const char *staging_dir, const char *subdir,
-                           const char *name, const char *kind)
+/* A pkg->bins[]/pkg->libs[] entry is either a bare name (found at
+ * "<default_subdir>/<name>" in the package, and installed under that
+ * same bare name — fap's original, still the common case for a
+ * single-binary package) or, if it contains a '/', an explicit path
+ * relative to the package root (for a package with a real directory
+ * layout, e.g. "firefox/firefox" or "bin/nvim" alongside a
+ * share/nvim/runtime/ the binary finds by locating itself — see the
+ * file header comment). Either way, the *installed* name (what a user
+ * types, and what bin_root/<name> becomes) is always the basename of
+ * whichever path this resolves to — so "libpkg" and "bin/libpkg" and
+ * "some/deep/path/libpkg" all end up runnable as plain "libpkg".
+ * short_out may be NULL when the caller only needs the on-disk path
+ * (verification and lib-copying don't care about the installed name). */
+static int resolve_pkg_entry(const char *entry, const char *default_subdir,
+                              char *path_out, size_t path_sz,
+                              char *short_out, size_t short_sz)
 {
+    const char *rel = entry;
+    char built[FAP_MAX_PATH];
+    if (!strchr(entry, '/')) {
+        int n = snprintf(built, sizeof(built), "%s/%s", default_subdir, entry);
+        if (n < 0 || (size_t)n >= sizeof(built))
+            return fap_error("install: entry path too long: %s/%s", default_subdir, entry);
+        rel = built;
+    }
+    if (snprintf(path_out, path_sz, "%s", rel) >= (int)path_sz)
+        return fap_error("install: entry path too long: %s", rel);
+
+    if (short_out) {
+        const char *base = strrchr(rel, '/');
+        base = base ? base + 1 : rel;
+        if (*base == '\0')
+            return fap_error("install: entry \"%s\" has no filename component", entry);
+        if (snprintf(short_out, short_sz, "%s", base) >= (int)short_sz)
+            return fap_error("install: installed name too long: %s", base);
+    }
+    return 0;
+}
+
+static int verify_present(const char *staging_dir, const char *default_subdir,
+                           const char *entry, const char *kind)
+{
+    char rel[FAP_MAX_PATH];
+    if (resolve_pkg_entry(entry, default_subdir, rel, sizeof(rel), NULL, 0) < 0)
+        return -1;
     char path[FAP_MAX_PATH];
-    int n = snprintf(path, sizeof(path), "%s/%s/%s", staging_dir, subdir, name);
+    int n = snprintf(path, sizeof(path), "%s/%s", staging_dir, rel);
     if (n < 0 || (size_t)n >= sizeof(path))
         return fap_error("install: %s path too long", kind);
     struct stat st;
     if (stat(path, &st) < 0)
-        return fap_error("install: expected %s \"%s\" missing from package", kind, name);
+        return fap_error("install: expected %s \"%s\" missing from package", kind, entry);
     return 0;
 }
 
@@ -126,13 +182,17 @@ static int install_bins(const FapPackage *pkg, const char *pkg_dir,
                          const char *bin_root, const char *libs_root)
 {
     for (int i = 0; i < pkg->bins_count; i++) {
+        char rel[FAP_MAX_PATH], short_name[FAP_MAX_NAME];
+        if (resolve_pkg_entry(pkg->bins[i], "bin", rel, sizeof(rel), short_name, sizeof(short_name)) < 0)
+            return -1;
+
         char link[FAP_MAX_PATH];
-        int n = snprintf(link, sizeof(link), "%s/%s", bin_root, pkg->bins[i]);
+        int n = snprintf(link, sizeof(link), "%s/%s", bin_root, short_name);
         if (n < 0 || (size_t)n >= sizeof(link))
             return fap_error("install: symlink path too long");
 
         char real_bin[FAP_MAX_PATH];
-        n = snprintf(real_bin, sizeof(real_bin), "%s/bin/%s", pkg_dir, pkg->bins[i]);
+        n = snprintf(real_bin, sizeof(real_bin), "%s/%s", pkg_dir, rel);
         if (n < 0 || (size_t)n >= sizeof(real_bin))
             return fap_error("install: binary path too long");
 

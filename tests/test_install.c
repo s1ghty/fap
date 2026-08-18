@@ -110,6 +110,47 @@ static void write_tarball_with_lib(const char *out_path, const char *binname,
     free(compressed);
 }
 
+typedef struct {
+    const char *path;
+    const char *content;
+    unsigned    mode;
+} TarEntry;
+
+/* General multi-entry ustar archive builder, for tree-shaped packages
+ * (a binary nested under a nonstandard path, plus sibling resource
+ * files) that the fixed-shape helpers above can't express. */
+static void write_tarball(const char *out_path, const TarEntry *entries, int count)
+{
+    size_t total_blocks = 0;
+    for (int i = 0; i < count; i++)
+        total_blocks += 1 + (strlen(entries[i].content) + BLK - 1) / BLK;
+    size_t buf_size = (total_blocks + 2) * BLK; /* +2 zero blocks: end-of-archive marker */
+
+    unsigned char *tar = calloc(buf_size, 1);
+    size_t off = 0;
+    for (int i = 0; i < count; i++) {
+        size_t clen = strlen(entries[i].content);
+        put_field(tar, off, 100, entries[i].path);
+        put_octal(tar, off + 100, 8, entries[i].mode);
+        put_octal(tar, off + 124, 12, clen);
+        tar[off + 156] = '0';
+        memcpy(tar + off + 257, "ustar", 5);
+        off += BLK;
+        memcpy(tar + off, entries[i].content, clen);
+        off += ((clen + BLK - 1) / BLK) * BLK;
+    }
+
+    size_t bound = ZSTD_compressBound(buf_size);
+    char *compressed = malloc(bound);
+    size_t clen = ZSTD_compress(compressed, bound, tar, buf_size, 3);
+
+    FILE *f = fopen(out_path, "wb");
+    fwrite(compressed, 1, clen, f);
+    fclose(f);
+    free(compressed);
+    free(tar);
+}
+
 static int exists(const char *path)
 {
     struct stat st;
@@ -273,6 +314,61 @@ int main(void)
           "wrapper script removed too (fap_remove isn't just readlink-based)");
     CHECK(exists(libs_dst),
           "shared libs dir is NOT cleaned up on remove (known simplification, see install.c)");
+
+    /* ── tree-shaped packages: a bin entry with a '/' is an explicit
+     * path, not a bare name — for a package that ships a real resource
+     * tree alongside its binary (neovim's share/nvim/runtime/,
+     * Firefox's bundled locale/plugin files), not just bin/<name> ── */
+
+    const char *treetarball = "/tmp/fap_test_install_tree.tar.zst";
+    TarEntry tree_entries[] = {
+        { "myapp/bin/myapp", "#!/bin/sh\necho hello from myapp\n", 0755 },
+        { "myapp/share/myapp/runtime/colors.txt", "some colorscheme data\n", 0644 },
+        { "myapp/share/myapp/runtime/syntax/c.txt", "c syntax rules\n", 0644 },
+        { "myapp/README.md", "just a doc file, not bin or lib\n", 0644 },
+    };
+    write_tarball(treetarball, tree_entries, 4);
+    char treeurl[256];
+    snprintf(treeurl, sizeof(treeurl), "file://%s", treetarball);
+
+    FapPackage treepkg;
+    memset(&treepkg, 0, sizeof(treepkg));
+    strcpy(treepkg.name, "myapp");
+    strcpy(treepkg.version, "1.0");
+    strcpy(treepkg.url, treeurl);
+    strcpy(treepkg.sha256, "unused-stubbed-out");
+    treepkg.bins_count = 1;
+    strcpy(treepkg.bins[0], "myapp/bin/myapp");
+
+    printf("\ntree-shaped packages:\n");
+
+    CHECK(fap_install(&treepkg) == 0, "install succeeds for an explicit-path bin entry");
+    CHECK(exists("/tmp/fap_test_install_home/.local/fap/pkgs/myapp-1.0/myapp/bin/myapp"),
+          "binary placed at its declared path, not forced under bin/");
+    CHECK(exists("/tmp/fap_test_install_home/.local/fap/pkgs/myapp-1.0/myapp/share/myapp/runtime/colors.txt"),
+          "sibling resource file preserved");
+    CHECK(exists("/tmp/fap_test_install_home/.local/fap/pkgs/myapp-1.0/myapp/share/myapp/runtime/syntax/c.txt"),
+          "nested resource file (2 dirs deep) preserved");
+    CHECK(exists("/tmp/fap_test_install_home/.local/fap/pkgs/myapp-1.0/myapp/README.md"),
+          "a file that's neither bin/ nor lib/ is preserved too");
+
+    const char *myapp_link = "/tmp/fap_test_install_home/.local/bin/myapp";
+    char treelinktarget[256] = {0};
+    ssize_t tn = readlink(myapp_link, treelinktarget, sizeof(treelinktarget) - 1);
+    CHECK(tn > 0, "installed command uses the basename, not the full declared path");
+    CHECK(tn > 0 && strcmp(treelinktarget,
+          "/tmp/fap_test_install_home/.local/fap/pkgs/myapp-1.0/myapp/bin/myapp") == 0,
+          "symlink target is the exact declared path, absolute");
+
+    char treeoutput[256] = {0};
+    int tree_run_rc = run_and_capture(myapp_link, treeoutput, sizeof(treeoutput));
+    CHECK(tree_run_rc == 0 && strcmp(treeoutput, "hello from myapp\n") == 0,
+          "running the installed command actually executes the real binary");
+
+    CHECK(fap_remove("myapp") == 0, "remove succeeds for a tree-shaped package");
+    CHECK(!exists("/tmp/fap_test_install_home/.local/fap/pkgs/myapp-1.0"),
+          "whole package tree removed, including the resource files");
+    CHECK(!link_exists(myapp_link), "bin symlink removed");
 
     printf("\n%d passed, %d failed\n", pass, fail);
     return fail ? 1 : 0;
