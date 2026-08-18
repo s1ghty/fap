@@ -62,7 +62,15 @@ typedef struct {
     char       url[FAP_MAX_URL];
     char       sha256[FAP_SHA256_HEX];
     char       description[512];
-    char       bins[FAP_MAX_BINS][FAP_MAX_NAME]; /* binary names, found at bin/<name> in the package */
+    /* Each entry is either a bare name (found at bin/<name> in the
+     * package, the common single-binary-package case) or, if it
+     * contains a '/', an explicit path relative to the package root
+     * (e.g. "firefox/firefox") — for a package that ships a real
+     * directory tree of resources alongside its binary rather than
+     * just bin/<name>. Either way the installed command is always the
+     * basename: "nvim" and "bin/nvim" both end up runnable as "nvim".
+     * See install.c's resolve_pkg_entry(). */
+    char       bins[FAP_MAX_BINS][FAP_MAX_NAME];
     int        bins_count;
     char       libs[FAP_MAX_LIBS][FAP_MAX_NAME]; /* bundled .so filenames, found at lib/<name> in the package */
     int        libs_count;
