@@ -5,6 +5,7 @@
 #include <errno.h>
 #include <unistd.h>
 #include <sys/stat.h>
+#include <time.h>
 #include <curl/curl.h>
 #include <zstd.h>
 #include "fap.h"
@@ -51,7 +52,57 @@ static size_t write_file_cb(char *ptr, size_t size, size_t nmemb, void *stream)
     return fwrite(ptr, size, nmemb, (FILE *)stream);
 }
 
-static int download_to_file(const char *url, const char *path)
+struct progress_ctx {
+    const char *label;   /* e.g. "firefox 154.0" */
+    int          tty;    /* only print to a real terminal — see download_to_file */
+    double       last_print_time;
+    int          printed_anything;
+};
+
+static double monotonic_seconds(void)
+{
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return (double)ts.tv_sec + (double)ts.tv_nsec / 1e9;
+}
+
+/* Overwrites one line on stderr (curl's own convention for progress
+ * meters) via \r, so it doesn't interleave with fap's normal stdout
+ * output. curl calls this far more often than any human needs to see
+ * it redraw — sometimes dozens of times before dltotal is even known
+ * (still connecting) or after dlnow has already reached dltotal
+ * (finishing up) — so this throttles to real time passing (~10
+ * updates/sec) rather than trusting call frequency or percent deltas
+ * to mean anything, and always lets the true final state (dlnow ==
+ * dltotal) through regardless of the clock. */
+static int progress_cb(void *clientp, curl_off_t dltotal, curl_off_t dlnow,
+                        curl_off_t ultotal, curl_off_t ulnow)
+{
+    (void)ultotal; (void)ulnow;
+    struct progress_ctx *ctx = clientp;
+    if (!ctx->tty)
+        return 0;
+
+    int at_end = dltotal > 0 && dlnow >= dltotal;
+    double now = monotonic_seconds();
+    if (!at_end && ctx->printed_anything && now - ctx->last_print_time < 0.1)
+        return 0;
+    ctx->last_print_time = now;
+    ctx->printed_anything = 1;
+
+    if (dltotal <= 0) {
+        /* server didn't report a size (e.g. no Content-Length) — show
+         * bytes transferred instead of a percentage */
+        fprintf(stderr, "\rdownloading %s... %.1f MB", ctx->label, dlnow / 1e6);
+    } else {
+        double pct = (double)dlnow * 100.0 / (double)dltotal;
+        fprintf(stderr, "\rdownloading %s... %5.1f%%  (%.1f/%.1f MB)",
+                ctx->label, pct, dlnow / 1e6, dltotal / 1e6);
+    }
+    return 0;
+}
+
+static int download_to_file(const char *url, const char *path, const char *progress_label)
 {
     FILE *f = fopen(path, "wb");
     if (!f)
@@ -63,18 +114,26 @@ static int download_to_file(const char *url, const char *path)
         return fap_error("package: curl_easy_init failed");
     }
 
+    struct progress_ctx ctx = { progress_label, isatty(STDERR_FILENO), 0.0, 0 };
+
     curl_easy_setopt(curl, CURLOPT_URL, url);
     curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, write_file_cb);
     curl_easy_setopt(curl, CURLOPT_WRITEDATA, f);
     curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1L);
     curl_easy_setopt(curl, CURLOPT_TIMEOUT, 300L);
     curl_easy_setopt(curl, CURLOPT_USERAGENT, "fap/" FAP_VERSION);
+    curl_easy_setopt(curl, CURLOPT_NOPROGRESS, 0L);
+    curl_easy_setopt(curl, CURLOPT_XFERINFOFUNCTION, progress_cb);
+    curl_easy_setopt(curl, CURLOPT_XFERINFODATA, &ctx);
 
     CURLcode res = curl_easy_perform(curl);
     long status = 0;
     curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &status);
     curl_easy_cleanup(curl);
     fclose(f);
+
+    if (ctx.printed_anything)
+        fprintf(stderr, "\n");
 
     if (res != CURLE_OK)
         return fap_error("package: download %s: %s", url, curl_easy_strerror(res));
@@ -323,7 +382,9 @@ int fap_package_download(const FapPackage *pkg, const char *dest_path)
     if (n < 0 || (size_t)n >= sizeof(tmp))
         return fap_error("package: path too long: %s", dest_path);
 
-    if (download_to_file(pkg->url, tmp) < 0)
+    char label[FAP_MAX_NAME + FAP_MAX_VERSION + 2];
+    snprintf(label, sizeof(label), "%s %s", pkg->name, pkg->version);
+    if (download_to_file(pkg->url, tmp, label) < 0)
         return -1;
 
     if (fap_sha256_verify(tmp, pkg->sha256) < 0) {
