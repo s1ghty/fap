@@ -18,7 +18,7 @@ Minimal C package manager. No daemon, no runtime, no bullshit.
 | Dep resolver | src/resolver.c   | ✅ done        |
 | Download     | src/package.c    | ✅ done        |
 | Install      | src/install.c    | ✅ done        |
-| Tests        | tests/*.c        | ✅ done (140 checks across 7 files) |
+| Tests        | tests/*.c        | ✅ done (151 checks across 7 files) |
 
 ## Build
 
@@ -130,3 +130,19 @@ just skip whichever one isn't configured, rather than erroring.
 Set `FAP_TIME=1` to print how long a command took, e.g.
 `FAP_TIME=1 fap install jq` → `install: 842ms`. Off by default, no
 extra output otherwise.
+
+Under `sudo`, set it *after* `sudo` rather than before, or pass `-E`:
+plain `sudo` resets the target user's environment by default (same
+reason `FAP_STABLE_INDEX_URL` needs the same treatment — see Registry
+config above), so `FAP_TIME=1 sudo fap install jq` silently drops it.
+Either `sudo FAP_TIME=1 fap install jq` or
+`FAP_TIME=1 sudo -E fap install jq` gets it through.
+
+## Download progress
+
+Installing a package that needs downloading shows live progress
+(percentage and MB transferred) on a single, self-updating line, e.g.
+`downloading firefox 154.0...  62.3%  (205.4/330.0 MB)`. Only when
+stderr is an actual terminal — piped or redirected output (scripts,
+logs, `fap install foo 2>&1 | tee log`) stays clean, same convention
+`curl` itself uses.
