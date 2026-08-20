@@ -43,7 +43,15 @@
 #define FAP_MAX_PATH    4096
 #define FAP_SHA256_HEX  65   /* 64 hex chars + NUL */
 #define FAP_MAX_BINS    32   /* max binaries per package */
-#define FAP_MAX_LIBS    32   /* max bundled shared libraries per package */
+/* max bundled shared libraries per package — a real desktop-stack
+ * package (sway, a Wayland compositor, is the case that first hit
+ * this) can genuinely need dozens: every non-glibc-core .so its
+ * entry binary links against gets bundled (see package.sh), and a
+ * compositor's dependency graph runs through cairo/pango/glib,
+ * wlroots, X11-compat libs for Xwayland, and more — 69 in sway's
+ * case. 128 leaves real headroom above that, not just enough to
+ * scrape by. */
+#define FAP_MAX_LIBS    128
 #define FAP_MAX_DEPS    256  /* max deps in one manifest */
 #define FAP_MAX_PKGS    1024 /* max packages in a channel index */
 #define FAP_MAX_PKG_DEPS 32  /* max declared dependencies per package */
