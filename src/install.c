@@ -216,8 +216,13 @@ static int install_bins(const FapPackage *pkg, const char *pkg_dir,
  * user would actually type to run it. A package with desktop_type set
  * but bins_count == 0 is a registry authoring error (a session/
  * launcher entry with nothing to exec makes no sense) — reported as
- * such rather than silently skipped or writing a broken entry. */
-static int install_desktop_entry(const FapPackage *pkg, const char *bin_root)
+ * such rather than silently skipped or writing a broken entry.
+ * Icon=, if pkg->icon is set, points straight at the file inside
+ * pkg_dir — an absolute path with an extension is valid Icon= syntax
+ * per the XDG spec (Chrome's own .desktop file does the same for its
+ * product_logo_*.png), so there's no need to install into an icon
+ * theme directory or care about theme lookup at all. */
+static int install_desktop_entry(const FapPackage *pkg, const char *pkg_dir, const char *bin_root)
 {
     if (pkg->desktop_type[0] == '\0')
         return 0;
@@ -254,6 +259,8 @@ static int install_desktop_entry(const FapPackage *pkg, const char *bin_root)
         fprintf(f, "Comment=%s\n", pkg->description);
     fprintf(f, "Exec=%s\n", exec_path);
     fprintf(f, "TryExec=%s\n", exec_path);
+    if (pkg->icon[0])
+        fprintf(f, "Icon=%s/%s\n", pkg_dir, pkg->icon);
     fprintf(f, "Type=Application\n");
     if (strcmp(pkg->desktop_type, "wayland-session") == 0)
         fprintf(f, "DesktopNames=%s\n", pkg->name);
@@ -314,6 +321,16 @@ int fap_install(const FapPackage *pkg)
             return -1;
         }
     }
+    if (pkg->icon[0]) {
+        char icon_check[FAP_MAX_PATH];
+        struct stat icon_st;
+        if (snprintf(icon_check, sizeof(icon_check), "%s/%s", staging_dir, pkg->icon) >= (int)sizeof(icon_check) ||
+            stat(icon_check, &icon_st) < 0) {
+            fap_error("install: expected icon \"%s\" missing from package", pkg->icon);
+            fap_rm_rf(staging_dir);
+            return -1;
+        }
+    }
 
     if (fap_mkdir_p(pkgs_root) < 0) {
         fap_rm_rf(staging_dir);
@@ -338,7 +355,7 @@ int fap_install(const FapPackage *pkg)
     if (install_bins(pkg, pkg_dir, bin_root, libs_root) < 0)
         return -1;
 
-    return install_desktop_entry(pkg, bin_root);
+    return install_desktop_entry(pkg, pkg_dir, bin_root);
 }
 
 /* A bin/ entry belongs to abs_pkg_dir's package if it's a plain

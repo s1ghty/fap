@@ -200,6 +200,8 @@ static int parse_package(const char *obj, const char *obj_end,
         fap_json_string(&v, pkg->desktop_type, sizeof(pkg->desktop_type));
     if (fap_json_find(obj, obj_end, "desktop_name", &v) == 0)
         fap_json_string(&v, pkg->desktop_name, sizeof(pkg->desktop_name));
+    if (fap_json_find(obj, obj_end, "icon", &v) == 0)
+        fap_json_string(&v, pkg->icon, sizeof(pkg->icon));
 
     if (fap_json_optional_array(obj, obj_end, "bin", pkg->bins, &pkg->bins_count, FAP_MAX_BINS) < 0)
         return -1;

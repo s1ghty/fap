@@ -406,6 +406,36 @@ int main(void)
     CHECK(!exists(nodesktop_desktop_file),
           "the .desktop file is cleaned up on remove (deterministic filename, no manifest needed)");
 
+    /* icon: a bare name, same resolution rule as bins/libs, always
+     * relative to the package root (no default subdir like bin/lib
+     * get — an icon isn't "installed" anywhere of its own, Icon= just
+     * points straight at the file sitting inside pkg_dir). */
+    const char *icon_tarball = "/tmp/fap_test_install_icon.tar.zst";
+    TarEntry icon_entries[] = {
+        { "bin/tool", "#!/bin/sh\necho hi\n", 0755 },
+        { "icon.png", "fake-png-bytes", 0644 },
+    };
+    write_tarball(icon_tarball, icon_entries, 2);
+    char icon_url[256];
+    snprintf(icon_url, sizeof(icon_url), "file://%s", icon_tarball);
+
+    FapPackage iconpkg = pkg;
+    strcpy(iconpkg.url, icon_url);
+    strcpy(iconpkg.desktop_type, "application");
+    strcpy(iconpkg.icon, "icon.png");
+
+    CHECK(fap_install(&iconpkg) == 0, "install succeeds for a package with an icon");
+    CHECK(file_contains(nodesktop_desktop_file,
+          "Icon=/tmp/fap_test_install_home/.local/fap/pkgs/tool-1.0/icon.png"),
+          "Icon= points at the icon file's absolute installed path");
+    fap_remove("tool");
+
+    FapPackage missingicon = pkg;
+    strcpy(missingicon.desktop_type, "application");
+    strcpy(missingicon.icon, "no-such-icon.png");
+    CHECK(fap_install(&missingicon) < 0,
+          "install fails when icon is set but the file isn't actually in the package");
+
     /* x11-session/wayland-session only make sense in system mode — a
      * login manager reads them before any user is authenticated, so
      * there's no per-user equivalent. Tests run as a regular user, so
