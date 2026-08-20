@@ -18,7 +18,7 @@ Minimal C package manager. No daemon, no runtime, no bullshit.
 | Dep resolver | src/resolver.c   | ✅ done        |
 | Download     | src/package.c    | ✅ done        |
 | Install      | src/install.c    | ✅ done        |
-| Tests        | tests/*.c        | ✅ done (166 checks across 7 files) |
+| Tests        | tests/*.c        | ✅ done (177 checks across 7 files) |
 
 ## Build
 
@@ -124,6 +124,14 @@ or self-hosted registry, for example). `edge` has no default yet — no
 required until one does. `fap channels` shows what's actually in
 effect for both. Commands that check both channels (like `fap search`)
 just skip whichever one isn't configured, rather than erroring.
+
+Every fetched index is cached locally for `FAP_INDEX_TTL` seconds
+(default 3600 = 1 hour) — a command run again inside that window reads
+the cache instead of hitting the network at all, no user-visible
+difference besides speed. Set `FAP_INDEX_TTL=0` to always fetch fresh.
+A fetch that fails outright (network down, registry unreachable) falls
+back to the last cached copy if one exists, rather than failing the
+command entirely.
 
 ## Timing
 
