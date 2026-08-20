@@ -18,7 +18,7 @@ Minimal C package manager. No daemon, no runtime, no bullshit.
 | Dep resolver | src/resolver.c   | ✅ done        |
 | Download     | src/package.c    | ✅ done        |
 | Install      | src/install.c    | ✅ done        |
-| Tests        | tests/*.c        | ✅ done (177 checks across 7 files) |
+| Tests        | tests/*.c        | ✅ done (180 checks across 7 files) |
 
 ## Build
 
@@ -183,3 +183,13 @@ binary (its first declared `bin` entry, resolved the same way the
 was really installed. The file is named `<package-name>.desktop`,
 deterministically, so `fap remove` can find and delete it on removal
 without needing to record which type (if any) was ever registered.
+
+A third, independent field, `icon`, points at an icon file already
+sitting inside the package (a path relative to the package root, e.g.
+`"firefox/browser/chrome/icons/default/default128.png"`) and, if set,
+writes an absolute `Icon=` line pointing straight at it — no icon
+theme, no separate install step, same "absolute path is valid Icon=
+syntax" trick real apps installed outside a theme dir (Chrome, VS
+Code) already use. Optional; only matters alongside `desktop_type =
+"application"` for launcher icon visibility, and only for a package
+that actually ships one.

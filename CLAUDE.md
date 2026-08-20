@@ -104,7 +104,8 @@ eza  = { channel = "edge" }   # latest on edge
       "libs": ["libcurl.so.4"],
       "deps": ["openssl", "zlib"],
       "desktop_type": "application",
-      "desktop_name": "Curl"
+      "desktop_name": "Curl",
+      "icon": "browser/chrome/icons/default/default128.png"
     }
   ]
 }
@@ -119,9 +120,13 @@ bullet above for what happens to them at install time. `desktop_type`
 `desktop_name` register an XDG `.desktop` entry at install time —
 launcher/menu visibility for `application` (both privilege modes), or
 login-manager session selection for the two session types (system
-mode only — see `install.c`'s `install_desktop_entry()`). `deps`,
-`bin`, `libs`, `desktop_type`, and `desktop_name` are all optional;
-most packages set none of the last two.
+mode only — see `install.c`'s `install_desktop_entry()`). `icon` is a
+path to an icon file already inside the package (relative to the
+package root, same bare-name-or-explicit-path convention as `bin`/
+`libs`) — if set, becomes an absolute `Icon=` line in the `.desktop`
+entry pointing straight at the installed file, no icon theme involved.
+`deps`, `bin`, `libs`, `desktop_type`, `desktop_name`, and `icon` are
+all optional; most packages set none of the last three.
 
 ## Coding conventions
 - C99, no C++ features, no GCC extensions unless explicitly noted

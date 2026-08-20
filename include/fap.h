@@ -108,6 +108,14 @@ typedef struct {
      * picker — falls back to pkg->name if left empty. */
     char       desktop_type[16];
     char       desktop_name[FAP_MAX_NAME];
+    /* Optional path (bare name or, with a '/', explicit relative path —
+     * same resolve_pkg_entry() rules as bins/libs above) to an icon
+     * file inside the package, shown by launchers (fuzzel, rofi, ...)
+     * next to a "application" desktop_type entry. Empty (the default)
+     * means no Icon= line is written — most packages, and any
+     * single-binary package with no bundled resource tree, have
+     * nothing to point at. */
+    char       icon[FAP_MAX_NAME];
 } FapPackage;
 
 /* ── dependency (from fap.toml) ───────────────────────────────── */
