@@ -102,7 +102,9 @@ eza  = { channel = "edge" }   # latest on edge
       "description": "...",
       "bin": ["curl"],
       "libs": ["libcurl.so.4"],
-      "deps": ["openssl", "zlib"]
+      "deps": ["openssl", "zlib"],
+      "desktop_type": "application",
+      "desktop_name": "Curl"
     }
   ]
 }
@@ -112,8 +114,14 @@ against the same registry, no version constraints — same model as
 `fap.toml`'s bare `channel`-only deps). `libs` lists bundled shared
 library filenames, found at `lib/<name>` inside the package (mirrors
 how `bin` entries are found at `bin/<name>`) — see the install root
-bullet above for what happens to them at install time. `deps`, `bin`,
-and `libs` are all optional.
+bullet above for what happens to them at install time. `desktop_type`
+(one of `application`, `x11-session`, `wayland-session`) and
+`desktop_name` register an XDG `.desktop` entry at install time —
+launcher/menu visibility for `application` (both privilege modes), or
+login-manager session selection for the two session types (system
+mode only — see `install.c`'s `install_desktop_entry()`). `deps`,
+`bin`, `libs`, `desktop_type`, and `desktop_name` are all optional;
+most packages set none of the last two.
 
 ## Coding conventions
 - C99, no C++ features, no GCC extensions unless explicitly noted

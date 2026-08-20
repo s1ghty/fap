@@ -207,6 +207,67 @@ static int install_bins(const FapPackage *pkg, const char *pkg_dir,
     return 0;
 }
 
+/* Writes <target_dir>/<pkg->name>.desktop atomically (temp file +
+ * rename, same pattern as everywhere else in this codebase). No-op if
+ * pkg->desktop_type isn't set — most packages don't declare one.
+ * Exec/TryExec point at the package's first declared bin, resolved to
+ * its absolute installed path in bin_root — same short-name logic
+ * install_bins() already uses, so "Exec=" always matches whatever a
+ * user would actually type to run it. A package with desktop_type set
+ * but bins_count == 0 is a registry authoring error (a session/
+ * launcher entry with nothing to exec makes no sense) — reported as
+ * such rather than silently skipped or writing a broken entry. */
+static int install_desktop_entry(const FapPackage *pkg, const char *bin_root)
+{
+    if (pkg->desktop_type[0] == '\0')
+        return 0;
+    if (pkg->bins_count == 0)
+        return fap_error("install: \"%s\" declares desktop_type \"%s\" but has no bin entries to exec",
+                          pkg->name, pkg->desktop_type);
+
+    char target_dir[FAP_MAX_PATH];
+    if (fap_desktop_dir(pkg->desktop_type, target_dir, sizeof(target_dir)) < 0)
+        return -1;
+    if (fap_mkdir_p(target_dir) < 0)
+        return -1;
+
+    char discard_path[FAP_MAX_PATH], short_name[FAP_MAX_NAME];
+    if (resolve_pkg_entry(pkg->bins[0], "bin", discard_path, sizeof(discard_path), short_name, sizeof(short_name)) < 0)
+        return -1;
+    char exec_path[FAP_MAX_PATH];
+    if (snprintf(exec_path, sizeof(exec_path), "%s/%s", bin_root, short_name) >= (int)sizeof(exec_path))
+        return fap_error("install: desktop entry Exec path too long");
+
+    char entry_path[FAP_MAX_PATH];
+    if (snprintf(entry_path, sizeof(entry_path), "%s/%s.desktop", target_dir, pkg->name) >= (int)sizeof(entry_path))
+        return fap_error("install: desktop entry path too long");
+    char tmp[FAP_MAX_PATH];
+    if (snprintf(tmp, sizeof(tmp), "%s.tmp", entry_path) >= (int)sizeof(tmp))
+        return fap_error("install: desktop entry path too long");
+
+    FILE *f = fopen(tmp, "w");
+    if (!f)
+        return fap_error("install: open %s for write: %s", tmp, strerror(errno));
+    fprintf(f, "[Desktop Entry]\n");
+    fprintf(f, "Name=%s\n", pkg->desktop_name[0] ? pkg->desktop_name : pkg->name);
+    if (pkg->description[0])
+        fprintf(f, "Comment=%s\n", pkg->description);
+    fprintf(f, "Exec=%s\n", exec_path);
+    fprintf(f, "TryExec=%s\n", exec_path);
+    fprintf(f, "Type=Application\n");
+    if (strcmp(pkg->desktop_type, "wayland-session") == 0)
+        fprintf(f, "DesktopNames=%s\n", pkg->name);
+    if (fclose(f) != 0) {
+        unlink(tmp);
+        return fap_error("install: write %s: %s", tmp, strerror(errno));
+    }
+    if (rename(tmp, entry_path) < 0) {
+        unlink(tmp);
+        return fap_error("install: rename %s -> %s: %s", tmp, entry_path, strerror(errno));
+    }
+    return 0;
+}
+
 int fap_install(const FapPackage *pkg)
 {
     char dirname[FAP_MAX_NAME + FAP_MAX_VERSION + 2];
@@ -274,7 +335,10 @@ int fap_install(const FapPackage *pkg)
     if (fap_mkdir_p(bin_root) < 0)
         return -1;
 
-    return install_bins(pkg, pkg_dir, bin_root, libs_root);
+    if (install_bins(pkg, pkg_dir, bin_root, libs_root) < 0)
+        return -1;
+
+    return install_desktop_entry(pkg, bin_root);
 }
 
 /* A bin/ entry belongs to abs_pkg_dir's package if it's a plain
@@ -380,6 +444,24 @@ int fap_remove(const char *name)
                 unlink(link_path);
         }
         closedir(bd);
+    }
+
+    /* Desktop-entry cleanup: the filename is deterministic
+     * (<name>.desktop), so unlike bin_belongs_to's content-inspection
+     * approach, this doesn't need to know which desktop_type (if any)
+     * the package originally declared — just try every directory a
+     * package could plausibly have registered into and remove
+     * whichever one actually has a matching file. Best-effort: a
+     * missing file (the common case — most packages never had one) or
+     * a permission/lookup failure never fails the overall remove. */
+    static const char *desktop_types[] = { "application", "x11-session", "wayland-session" };
+    for (size_t i = 0; i < sizeof(desktop_types) / sizeof(desktop_types[0]); i++) {
+        char dir[FAP_MAX_PATH], entry_path[FAP_MAX_PATH];
+        if (fap_desktop_dir(desktop_types[i], dir, sizeof(dir)) < 0)
+            continue;
+        if (snprintf(entry_path, sizeof(entry_path), "%s/%s.desktop", dir, name) >= (int)sizeof(entry_path))
+            continue;
+        unlink(entry_path);
     }
 
     /* Shared libs cleanup (deleting libs_root/<lib> if no other

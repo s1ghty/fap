@@ -18,7 +18,7 @@ Minimal C package manager. No daemon, no runtime, no bullshit.
 | Dep resolver | src/resolver.c   | ✅ done        |
 | Download     | src/package.c    | ✅ done        |
 | Install      | src/install.c    | ✅ done        |
-| Tests        | tests/*.c        | ✅ done (151 checks across 7 files) |
+| Tests        | tests/*.c        | ✅ done (166 checks across 7 files) |
 
 ## Build
 
@@ -146,3 +146,32 @@ Installing a package that needs downloading shows live progress
 stderr is an actual terminal — piped or redirected output (scripts,
 logs, `fap install foo 2>&1 | tee log`) stays clean, same convention
 `curl` itself uses.
+
+## Desktop entries (app launchers, WM/compositor login sessions)
+
+Most packages just install a binary — nothing more. A package can
+optionally register an XDG `.desktop` entry too, via two fields in its
+registry entry: `desktop_type` (`"application"`, `"x11-session"`, or
+`"wayland-session"`) and `desktop_name` (the display name shown in a
+launcher/session picker; falls back to the package name if unset).
+
+- `"application"` — visible to app launchers (fuzzel, rofi, wofi, ...)
+  and desktop menus. Works in both privilege modes: system installs
+  write to `/usr/share/applications/`, per-user installs write to
+  `~/.local/share/applications/`, the real XDG-defined per-user
+  override for this one.
+- `"x11-session"` / `"wayland-session"` — a WM/compositor becomes
+  selectable at a display manager's (SDDM, GDM, LightDM, ...) login
+  screen, writing to `/usr/share/xsessions/` or
+  `/usr/share/wayland-sessions/`. **System mode (`sudo`) only** — a
+  login manager reads these before any user is authenticated, so
+  there's no meaningful per-user equivalent to fall back to; `fap
+  install` fails cleanly rather than silently skipping if attempted
+  without root.
+
+`Exec=`/`TryExec=` always point at the package's actual installed
+binary (its first declared `bin` entry, resolved the same way the
+`bin_root` symlink is), so the entry is never stale relative to what
+was really installed. The file is named `<package-name>.desktop`,
+deterministically, so `fap remove` can find and delete it on removal
+without needing to record which type (if any) was ever registered.
