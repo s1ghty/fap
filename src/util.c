@@ -116,6 +116,36 @@ int fap_bin_path(char *buf, size_t bufsz)
     return fap_home_path(FAP_USER_BIN, buf, bufsz);
 }
 
+int fap_desktop_dir(const char *desktop_type, char *buf, size_t bufsz)
+{
+    if (!desktop_type)
+        return fap_error("desktop: no desktop_type given");
+
+    if (strcmp(desktop_type, "application") == 0) {
+        if (fap_is_system_mode()) {
+            int n = snprintf(buf, bufsz, "%s", FAP_SYSTEM_APPLICATIONS);
+            if (n < 0 || (size_t)n >= bufsz)
+                return fap_error("path too long: %s", FAP_SYSTEM_APPLICATIONS);
+            return 0;
+        }
+        return fap_home_path(FAP_USER_APPLICATIONS, buf, bufsz);
+    }
+
+    if (strcmp(desktop_type, "x11-session") == 0 || strcmp(desktop_type, "wayland-session") == 0) {
+        if (!fap_is_system_mode())
+            return fap_error("desktop: %s entries only apply in system mode (sudo) — "
+                              "a login manager reads them before any user is authenticated, "
+                              "so there's no per-user equivalent", desktop_type);
+        const char *dir = strcmp(desktop_type, "x11-session") == 0 ? FAP_XSESSIONS : FAP_WAYLAND_SESSIONS;
+        int n = snprintf(buf, bufsz, "%s", dir);
+        if (n < 0 || (size_t)n >= bufsz)
+            return fap_error("path too long: %s", dir);
+        return 0;
+    }
+
+    return fap_error("desktop: unknown desktop_type \"%s\"", desktop_type);
+}
+
 /* mkdir -p: create all intermediate dirs */
 int fap_mkdir_p(const char *path)
 {

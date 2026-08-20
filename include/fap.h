@@ -28,6 +28,21 @@
 #define FAP_PKGS        "pkgs"
 #define FAP_STAGING     "staging"
 #define FAP_LIBS        "libs"
+
+/* XDG desktop-entry directories a package can optionally register
+ * into (see pkg->desktop_type below and fap_desktop_dir() in util.c).
+ * "application" (launcher/menu visibility, e.g. fuzzel/rofi finding
+ * an installed GUI app) works in both privilege modes, same
+ * system-vs-user split as everything else — XDG defines a real
+ * per-user override dir for this one. "x11-session"/"wayland-session"
+ * (a WM/compositor becoming selectable at a display manager's login
+ * screen) only make sense in system mode: a login manager reads these
+ * before any user is authenticated, so there's no meaningful
+ * per-user equivalent to fall back to. */
+#define FAP_SYSTEM_APPLICATIONS  "/usr/share/applications"
+#define FAP_USER_APPLICATIONS   ".local/share/applications"
+#define FAP_XSESSIONS           "/usr/share/xsessions"
+#define FAP_WAYLAND_SESSIONS    "/usr/share/wayland-sessions"
 /* fap tracks machine-wide state, like a distro package manager, not a
  * per-project dependency file — running `fap install` from two
  * different directories (or as two different users under the same
@@ -84,6 +99,15 @@ typedef struct {
     int        libs_count;
     char       deps[FAP_MAX_PKG_DEPS][FAP_MAX_NAME]; /* names of packages this one depends on */
     int        deps_count;
+    /* Optional XDG desktop-entry registration — empty (the default)
+     * for most packages, which just install a binary with no launcher/
+     * session visibility at all. One of "application", "x11-session",
+     * "wayland-session" (see the FAP_*_APPLICATIONS/FAP_*SESSIONS
+     * comment above); anything else is treated as unset. desktop_name
+     * is the human-readable Name= shown in the launcher/session
+     * picker — falls back to pkg->name if left empty. */
+    char       desktop_type[16];
+    char       desktop_name[FAP_MAX_NAME];
 } FapPackage;
 
 /* ── dependency (from fap.toml) ───────────────────────────────── */
@@ -217,6 +241,15 @@ int  fap_other_root_path(const char *sub, char *buf, size_t bufsz);
  * into — FAP_SYSTEM_BIN if running as root, $HOME/FAP_USER_BIN
  * otherwise. */
 int  fap_bin_path(char *buf, size_t bufsz);
+
+/* Resolves the target directory for a .desktop entry of the given
+ * type ("application", "x11-session", or "wayland-session" — see
+ * FapPackage's desktop_type). "application" works in both privilege
+ * modes; the two session types only make sense in system mode and
+ * return -1 (fap_err set) otherwise — see the FAP_XSESSIONS/
+ * FAP_WAYLAND_SESSIONS comment above for why. Also returns -1 for
+ * any other/empty desktop_type. */
+int  fap_desktop_dir(const char *desktop_type, char *buf, size_t bufsz);
 
 int  fap_mkdir_p(const char *path);
 int  fap_rm_rf(const char *path);

@@ -370,6 +370,66 @@ int main(void)
           "whole package tree removed, including the resource files");
     CHECK(!link_exists(myapp_link), "bin symlink removed");
 
+    /* ── desktop entries: most packages never set desktop_type (no
+     * .desktop file at all, the default/common case); one that does
+     * gets a real XDG entry written and cleaned up on remove ── */
+
+    printf("\ndesktop entries:\n");
+
+    const char *nodesktop_desktop_file =
+        "/tmp/fap_test_install_home/.local/share/applications/tool.desktop";
+
+    FapPackage plain = pkg; /* the "tool" package from way above, no desktop_type */
+    CHECK(fap_install(&plain) == 0, "install succeeds for a package with no desktop_type");
+    CHECK(!exists(nodesktop_desktop_file),
+          "no .desktop file written when desktop_type isn't set (the common/default case)");
+    fap_remove("tool");
+
+    FapPackage app = pkg;
+    strcpy(app.desktop_type, "application");
+    strcpy(app.desktop_name, "My Tool");
+    strcpy(app.description, "a test tool");
+
+    CHECK(fap_install(&app) == 0, "install succeeds for a package with desktop_type=application");
+    CHECK(exists(nodesktop_desktop_file), "a .desktop file was written to ~/.local/share/applications/");
+    CHECK(file_contains(nodesktop_desktop_file, "Name=My Tool"), "Name= uses desktop_name");
+    CHECK(file_contains(nodesktop_desktop_file, "Comment=a test tool"), "Comment= uses description");
+    CHECK(file_contains(nodesktop_desktop_file, "Type=Application"), "Type=Application present");
+    CHECK(file_contains(nodesktop_desktop_file, "Exec=/tmp/fap_test_install_home/.local/bin/tool"),
+          "Exec= points at the real, absolute installed binary path");
+    CHECK(file_contains(nodesktop_desktop_file, "TryExec=/tmp/fap_test_install_home/.local/bin/tool"),
+          "TryExec= matches Exec=");
+    CHECK(!file_contains(nodesktop_desktop_file, "DesktopNames"),
+          "no DesktopNames= for a plain application entry (only wayland-session needs it)");
+
+    CHECK(fap_remove("tool") == 0, "remove succeeds for a package with a desktop entry");
+    CHECK(!exists(nodesktop_desktop_file),
+          "the .desktop file is cleaned up on remove (deterministic filename, no manifest needed)");
+
+    /* x11-session/wayland-session only make sense in system mode — a
+     * login manager reads them before any user is authenticated, so
+     * there's no per-user equivalent. Tests run as a regular user, so
+     * this exercises the real rejection path, not a hypothetical one.
+     * install_desktop_entry() is fap_install()'s last step, running
+     * after the package dir is already renamed into place and its
+     * bins already symlinked — same as install_libs()/install_bins()
+     * failing, this doesn't roll back what already succeeded (an
+     * existing behavior, not new here): the core install is still
+     * good, only the optional desktop-entry step failed. */
+    FapPackage waysession = pkg;
+    strcpy(waysession.desktop_type, "wayland-session");
+    CHECK(fap_install(&waysession) < 0,
+          "install fails for a wayland-session entry when not running as root");
+    CHECK(exists("/tmp/fap_test_install_home/.local/fap/pkgs/tool-1.0"),
+          "the core install (package dir) still succeeded despite the desktop-entry step failing");
+    fap_remove("tool");
+
+    FapPackage nodesktopbin = pkg;
+    strcpy(nodesktopbin.desktop_type, "application");
+    nodesktopbin.bins_count = 0;
+    CHECK(fap_install(&nodesktopbin) < 0,
+          "install fails when desktop_type is set but the package has no bin entries");
+
     printf("\n%d passed, %d failed\n", pass, fail);
     return fail ? 1 : 0;
 }
