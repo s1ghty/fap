@@ -40,21 +40,31 @@ fap/
 ├── Makefile
 ├── fap.toml            ← example manifest
 ├── include/
-│   └── fap.h           ← shared types and constants
+│   ├── fap.h           ← shared types and constants
+│   └── json.h          ← JSON parsing API (json.c)
 ├── src/
 │   ├── main.c          ← CLI entrypoint, arg dispatch
 │   ├── cli.c           ← command implementations
 │   ├── config.c        ← fap.toml parsing (toml.h via vendor)
 │   ├── lock.c          ← fap.lock read/write
-│   ├── registry.c      ← fetch + parse channel index
+│   ├── json.c          ← minimal JSON parser (channel index, fap.lock)
+│   ├── registry.c      ← fetch + parse channel index, local index cache
+│   ├── resolver.c      ← dependency resolution (pkg.deps → install order)
 │   ├── package.c       ← download, verify SHA256, extract zstd tarball
-│   ├── install.c       ← staging → atomic swap → symlink
+│   ├── install.c       ← staging → atomic swap → symlink → .desktop entry
 │   ├── hash.c          ← SHA256 implementation (or libcrypto wrapper)
 │   └── util.c          ← path helpers, string utils, error handling
 ├── vendor/
-│   └── toml.h          ← single-header TOML parser (toml-c)
+│   ├── toml.h          ← TOML parser API (toml-c)
+│   └── toml.c          ← TOML parser implementation
 └── tests/
-    └── test_hash.c     ← unit tests (more to be added)
+    ├── test_hash.c
+    ├── test_lock.c
+    ├── test_config.c
+    ├── test_registry.c
+    ├── test_resolver.c
+    ├── test_package.c
+    └── test_install.c  ← 180 checks total across all 7 files
 ```
 
 ## fap.toml format
@@ -128,6 +138,58 @@ entry pointing straight at the installed file, no icon theme involved.
 `deps`, `bin`, `libs`, `desktop_type`, `desktop_name`, and `icon` are
 all optional; most packages set none of the last three.
 
+## Companion repo: fap-registry
+This repo (`fap`) is the client only — it never authors packages. The
+actual `stable.json` served at `FAP_DEFAULT_STABLE_INDEX_URL` (see
+registry.c) is built and hosted by a **separate sibling repo**,
+`s1ghty/fap-registry`, checked out independently (not a subdirectory
+or submodule of this repo — different local path entirely, e.g.
+`~/Downloads/project/fap-registry` in this environment, but always
+just wherever it happens to be cloned; look for it rather than assume
+a path).
+
+- `package.sh` — turns one already-downloaded/built binary (or a whole
+  `--tree` app directory) into a fap package tarball + a `stable.json`
+  entry, handling `ldd`-based shared-lib bundling (with a GPU/graphics-
+  driver-stack exclusion list — those libs must always come from the
+  target machine, never get bundled), and `--desktop-type`/
+  `--desktop-name`/`--icon` for `.desktop` entries.
+- `update.sh` — reads `sources.toml`, checks each package's upstream
+  (GitHub releases API, or an arbitrary `version_url` for non-GitHub
+  projects like Firefox) for a newer version, and if found: downloads/
+  builds it, repackages via `package.sh`, uploads the tarball as a
+  GitHub release asset, updates `stable.json`, and opens a PR. Runs on
+  a schedule via GitHub Actions; `-f, --force NAME` re-runs it for one
+  package immediately regardless of whether upstream actually has a
+  newer version — for when *packaging logic itself* changed (a new
+  `package.sh` flag, a bundling-exclusion fix), not the upstream
+  release. A forced repackage with the version unchanged gets its own
+  disambiguated release tag rather than overwriting the existing one
+  in place — a previously-published URL's content must never change
+  after the fact, since that's exactly what fap.lock's sha256 field
+  (and any index cache) assumes holds everywhere.
+- `sources.toml` — one `[[package]]` table per tracked upstream, field
+  docs live at the top of the file itself.
+
+**Before merging any fap-registry PR that changes `stable.json`**
+(automated update PRs included), validate it against fap's *real*
+parser, not just by eyeballing the JSON — a single malformed entry
+breaks index parsing for every fap user, not just that one package.
+Pattern used throughout this project's history: build a small
+throwaway C program that links this repo's actual `registry.c`/
+`json.c`/`util.c`, point `FAP_STABLE_INDEX_URL` at the PR branch's raw
+`stable.json` on GitHub, call `fap_index_fetch`, and confirm it parses
+cleanly with the expected field values for the changed package(s).
+`FapIndex` is large (heap-allocate it — `malloc(sizeof(FapIndex))`,
+never declare one on the stack, see `cli.c` for the pattern every real
+caller already uses). Also watch for index-cache collisions across
+repeated ad-hoc validation runs: every call shares one cache path
+independent of the URL fetched (real fap usage only ever points at one
+registry, so this is by design) — `rm -rf ~/.local/fap/index-cache`
+(or whatever `$HOME` the harness runs under) between runs when
+pointing at different branches/URLs in sequence, or a stale result
+from an earlier check will silently get served for a later one.
+
 ## Coding conventions
 - C99, no C++ features, no GCC extensions unless explicitly noted
 - All error paths return -1 and set a global `fap_err` string (see include/fap.h)
@@ -145,7 +207,7 @@ make clean
 ```
 
 Dependencies: libcurl, libzstd, libcrypto (OpenSSL) — all standard on Linux.
-TOML parsing: vendor/toml.h (single-header, no extra dep).
+TOML parsing: vendor/toml.h + toml.c (toml-c, vendored, no extra system dep).
 
 ## What's implemented vs TODO
 See README.md for current status. When implementing, always write the .h declaration
