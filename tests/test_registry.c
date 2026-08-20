@@ -1,6 +1,10 @@
+#define _POSIX_C_SOURCE 200809L
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
+#include <utime.h>
+#include <sys/stat.h>
 #include "fap.h"
 
 /* declared in registry.c, not part of the public fap.h API — exposed
@@ -129,6 +133,106 @@ static void test_index_parse_too_many_deps(void)
     free(idx);
 }
 
+static void write_file(const char *path, const char *content)
+{
+    FILE *f = fopen(path, "wb");
+    if (!f) { fprintf(stderr, "cannot write %s\n", path); exit(1); }
+    fputs(content, f);
+    fclose(f);
+}
+
+static const char *index_with_pkg(const char *pkgname)
+{
+    static char buf[512];
+    snprintf(buf, sizeof(buf),
+        "{\"packages\": [{\"name\": \"%s\", \"version\": \"1\", "
+        "\"url\": \"file:///dev/null\", \"sha256\": \"s\"}]}", pkgname);
+    return buf;
+}
+
+/* fap_index_fetch caches every fetch under <HOME>/.local/fap/index-cache/
+ * (see registry.c's file header comment) — a fetch within FAP_INDEX_TTL
+ * seconds of the last one reads that cache instead of hitting the
+ * network/file:// URL at all. Exercised with file:// sources (no real
+ * network needed) and an artificially backdated cache mtime to force
+ * staleness on demand, rather than actually waiting out a TTL. */
+static void test_index_fetch_caching(void)
+{
+    const char *home = "/tmp/fap_test_registry_home";
+    char cmd[256];
+    snprintf(cmd, sizeof(cmd), "rm -rf %s && mkdir -p %s", home, home);
+    system(cmd);
+    setenv("HOME", home, 1);
+
+    const char *src = "/tmp/fap_test_registry_src.json";
+    char srcurl[256];
+    snprintf(srcurl, sizeof(srcurl), "file://%s", src);
+    setenv("FAP_STABLE_INDEX_URL", srcurl, 1);
+    unsetenv("FAP_INDEX_TTL");
+
+    printf("\nregistry index caching:\n");
+
+    write_file(src, index_with_pkg("v1pkg"));
+    FapIndex *idx = alloc_index();
+    CHECK(fap_index_fetch(FAP_CHANNEL_STABLE, idx) == 0, "first fetch succeeds");
+    CHECK(idx->count == 1 && strcmp(idx->pkgs[0].name, "v1pkg") == 0,
+          "first fetch returns the source's real content");
+
+    char cache_file[FAP_MAX_PATH];
+    snprintf(cache_file, sizeof(cache_file), "%s/.local/fap/index-cache/stable.json", home);
+    struct stat st;
+    CHECK(stat(cache_file, &st) == 0, "fetch wrote a local cache file");
+
+    /* source changes, but the cache is still fresh (default 1h TTL) —
+     * a second fetch should NOT reflect the change */
+    write_file(src, index_with_pkg("v2pkg"));
+    free(idx);
+    idx = alloc_index();
+    CHECK(fap_index_fetch(FAP_CHANNEL_STABLE, idx) == 0, "second fetch (within TTL) succeeds");
+    CHECK(idx->count == 1 && strcmp(idx->pkgs[0].name, "v1pkg") == 0,
+          "second fetch served from cache, not re-fetched (still v1pkg despite source now being v2pkg)");
+
+    /* backdate the cache past the TTL window — next fetch must go back
+     * to the (now-changed) source. 3600 matches registry.c's
+     * DEFAULT_INDEX_TTL_SECONDS (not visible here, it's a static #define
+     * in a different translation unit) — if that default ever changes,
+     * this needs to move with it. */
+    time_t old = time(NULL) - 3600 - 60;
+    struct utimbuf times = { old, old };
+    utime(cache_file, &times);
+
+    free(idx);
+    idx = alloc_index();
+    CHECK(fap_index_fetch(FAP_CHANNEL_STABLE, idx) == 0, "third fetch (cache backdated stale) succeeds");
+    CHECK(idx->count == 1 && strcmp(idx->pkgs[0].name, "v2pkg") == 0,
+          "third fetch re-fetched from source once the cache was stale (now v2pkg)");
+
+    /* FAP_INDEX_TTL=0 means nothing is ever fresh — always re-fetch */
+    write_file(src, index_with_pkg("v3pkg"));
+    setenv("FAP_INDEX_TTL", "0", 1);
+    free(idx);
+    idx = alloc_index();
+    CHECK(fap_index_fetch(FAP_CHANNEL_STABLE, idx) == 0, "fourth fetch (TTL=0) succeeds");
+    CHECK(idx->count == 1 && strcmp(idx->pkgs[0].name, "v3pkg") == 0,
+          "FAP_INDEX_TTL=0 disables caching entirely (always current, v3pkg)");
+    unsetenv("FAP_INDEX_TTL");
+
+    /* network/source failure with a cache present (even stale) falls
+     * back to the cache instead of hard-failing */
+    utime(cache_file, &times); /* backdate again so it's eligible to be seen as stale */
+    setenv("FAP_STABLE_INDEX_URL", "file:///tmp/fap_test_registry_does_not_exist.json", 1);
+    free(idx);
+    idx = alloc_index();
+    CHECK(fap_index_fetch(FAP_CHANNEL_STABLE, idx) == 0,
+          "fetch with an unreachable source but an existing cache still succeeds");
+    CHECK(idx->count == 1 && strcmp(idx->pkgs[0].name, "v3pkg") == 0,
+          "...by falling back to the last successfully cached content (v3pkg)");
+
+    free(idx);
+    unsetenv("FAP_STABLE_INDEX_URL");
+    unsetenv("HOME");
+}
+
 int main(void)
 {
     printf("registry:\n");
@@ -137,6 +241,7 @@ int main(void)
     test_index_parse_missing_packages();
     test_index_parse_missing_field();
     test_index_parse_too_many_deps();
+    test_index_fetch_caching();
 
     printf("\n%d passed, %d failed\n", pass, fail);
     return fail ? 1 : 0;
