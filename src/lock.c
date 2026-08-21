@@ -89,7 +89,8 @@ int fap_lock_load(const char *path, FapLock *out)
             fap_channel_parse(chan, &pkg->channel) < 0 ||
             fap_json_optional_array(p, obj_end, "bin", pkg->bins, &pkg->bins_count, FAP_MAX_BINS) < 0 ||
             fap_json_optional_array(p, obj_end, "libs", pkg->libs, &pkg->libs_count, FAP_MAX_LIBS) < 0 ||
-            fap_json_optional_array(p, obj_end, "deps", pkg->deps, &pkg->deps_count, FAP_MAX_PKG_DEPS) < 0) {
+            fap_json_optional_array(p, obj_end, "deps", pkg->deps, &pkg->deps_count, FAP_MAX_PKG_DEPS) < 0 ||
+            fap_validate_package(pkg) < 0) {
             free(buf);
             return -1;
         }

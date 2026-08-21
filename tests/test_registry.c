@@ -133,6 +133,44 @@ static void test_index_parse_too_many_deps(void)
     free(idx);
 }
 
+/* fap_validate_package (called from parse_package for every entry) is
+ * the one choke point standing between a compromised/misconfigured
+ * registry and either a directory-traversal via pkg_dirname() or a
+ * shell-injection via install.c's generated wrapper scripts — see
+ * util.c's comment above fap_validate_package for the full reasoning.
+ * Each case below is a field a real attacker would target. */
+static void test_index_parse_rejects_unsafe_metadata(void)
+{
+    static const struct { const char *json; const char *why; } cases[] = {
+        { "{\"packages\": [{\"name\": \"../../etc/cron.d/evil\", \"version\": \"1\", "
+          "\"url\": \"u\", \"sha256\": \"s\"}]}",
+          "name escaping the install root via \"..\"" },
+        { "{\"packages\": [{\"name\": \"evil\", \"version\": \"1\", "
+          "\"url\": \"u\", \"sha256\": \"s\", \"bin\": [\"a\\\"; rm -rf ~; \\\"\"]}]}",
+          "bin entry that would break out of a wrapper script's quoting" },
+        { "{\"packages\": [{\"name\": \"evil\", \"version\": \"1\", "
+          "\"url\": \"u\", \"sha256\": \"s\", \"bin\": [\"../../outside\"]}]}",
+          "bin entry escaping the package root via \"..\"" },
+        { "{\"packages\": [{\"name\": \"evil\", \"version\": \"1\", "
+          "\"url\": \"u\", \"sha256\": \"s\", \"libs\": [\"/etc/passwd\"]}]}",
+          "lib entry that's an absolute path" },
+        { "{\"packages\": [{\"name\": \"evil\", \"version\": \"1\", "
+          "\"url\": \"u\", \"sha256\": \"s\", \"bin\": [\"x\"], "
+          "\"icon\": \"../../../etc/passwd\"}]}",
+          "icon path escaping the package root" },
+        { "{\"packages\": [{\"name\": \"evil\", \"version\": \"1\", "
+          "\"url\": \"u\", \"sha256\": \"s\", \"desktop_name\": \"x\\nExec=evil\"}]}",
+          "desktop_name injecting a newline (extra .desktop key)" },
+    };
+
+    for (size_t i = 0; i < sizeof(cases) / sizeof(cases[0]); i++) {
+        FapIndex *idx = alloc_index();
+        int rc = fap_index_parse(cases[i].json, strlen(cases[i].json), FAP_CHANNEL_STABLE, idx);
+        CHECK(rc < 0, cases[i].why);
+        free(idx);
+    }
+}
+
 static void write_file(const char *path, const char *content)
 {
     FILE *f = fopen(path, "wb");
@@ -241,6 +279,7 @@ int main(void)
     test_index_parse_missing_packages();
     test_index_parse_missing_field();
     test_index_parse_too_many_deps();
+    test_index_parse_rejects_unsafe_metadata();
     test_index_fetch_caching();
 
     printf("\n%d passed, %d failed\n", pass, fail);
