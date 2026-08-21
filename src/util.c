@@ -1,11 +1,25 @@
 #define _XOPEN_SOURCE 700
+/* flock() (fap_acquire_lock() below) isn't part of XOPEN/POSIX — it's
+ * a glibc extension gated behind this feature-test macro, not a GCC
+ * language extension (CLAUDE.md's "no GCC extensions" is about the
+ * compiler, not glibc's optional POSIX-adjacent library surface). Its
+ * simpler per-open-file-description semantics (vs. fcntl(F_SETLK)'s
+ * surprising per-process locking, where a second lock from the same
+ * process doesn't conflict and closing *any* fd drops *all* locks the
+ * process holds on the file) are what make "is another fap already
+ * running" straightforward to both implement and test. Fine to rely on
+ * a Linux-glibc-specific function here — CLAUDE.md already scopes fap
+ * to Linux x86_64 only. */
+#define _DEFAULT_SOURCE
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <stdarg.h>
 #include <errno.h>
 #include <sys/stat.h>
+#include <sys/file.h>
 #include <unistd.h>
+#include <fcntl.h>
 #include <ftw.h>
 #include <pwd.h>
 #include "fap.h"
@@ -288,4 +302,52 @@ int fap_channel_parse(const char *s, FapChannel *out)
     if (strcmp(s, "stable") == 0) { *out = FAP_CHANNEL_STABLE; return 0; }
     if (strcmp(s, "edge")   == 0) { *out = FAP_CHANNEL_EDGE;   return 0; }
     return fap_error("unknown channel: %s", s);
+}
+
+/* fap.toml/fap.lock are machine-wide state (see CLAUDE.md) but nothing
+ * previously stopped two concurrent `fap install`/`remove`/`sync`/
+ * `update` invocations from racing a read-modify-write on them — the
+ * atomic rename each write already does only prevents a torn *read*,
+ * not two processes each computing a new version from the same stale
+ * snapshot and clobbering each other's update. main.c acquires this
+ * around every command that writes either file, and only those —
+ * `fap search`/`list`/`info`/`channels` never touch them, so they stay
+ * unblocked. Non-blocking + fail-fast (not queued/blocking) on
+ * purpose, same as dpkg: telling the user another fap is already
+ * running is more useful than hanging indefinitely behind it. The fd
+ * is owned by the caller (main.c), not held in file-scope state here —
+ * this file's only global is fap_err (see CLAUDE.md's coding
+ * conventions). */
+int fap_acquire_lock(int *fd_out)
+{
+    char path[FAP_MAX_PATH], root[FAP_MAX_PATH];
+    if (fap_root_path(NULL, root, sizeof(root)) < 0)
+        return -1;
+    if (fap_mkdir_p(root) < 0)
+        return -1;
+    if (fap_root_path(FAP_LOCKFILE, path, sizeof(path)) < 0)
+        return -1;
+
+    int fd = open(path, O_CREAT | O_RDWR, 0644);
+    if (fd < 0)
+        return fap_error("lock: open %s: %s", path, strerror(errno));
+
+    if (flock(fd, LOCK_EX | LOCK_NB) < 0) {
+        int saved_errno = errno;
+        close(fd);
+        if (saved_errno == EWOULDBLOCK)
+            return fap_error("another fap process is already running (holding %s)", path);
+        return fap_error("lock: flock %s: %s", path, strerror(saved_errno));
+    }
+
+    *fd_out = fd;
+    return 0;
+}
+
+void fap_release_lock(int fd)
+{
+    if (fd >= 0) {
+        flock(fd, LOCK_UN);
+        close(fd);
+    }
 }
