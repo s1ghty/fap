@@ -442,17 +442,19 @@ int main(void)
      * this exercises the real rejection path, not a hypothetical one.
      * install_desktop_entry() is fap_install()'s last step, running
      * after the package dir is already renamed into place and its
-     * bins already symlinked — same as install_libs()/install_bins()
-     * failing, this doesn't roll back what already succeeded (an
-     * existing behavior, not new here): the core install is still
-     * good, only the optional desktop-entry step failed. */
+     * bins already symlinked — fap_install() rolls all of that back on
+     * a failure here (same as a failure in install_libs()/install_bins()
+     * itself), so a partially-applied install never lingers on disk
+     * under a name cmd_install never lock_upserts and `fap list`
+     * therefore can't ever show. */
     FapPackage waysession = pkg;
     strcpy(waysession.desktop_type, "wayland-session");
     CHECK(fap_install(&waysession) < 0,
           "install fails for a wayland-session entry when not running as root");
-    CHECK(exists("/tmp/fap_test_install_home/.local/fap/pkgs/tool-1.0"),
-          "the core install (package dir) still succeeded despite the desktop-entry step failing");
-    fap_remove("tool");
+    CHECK(!exists("/tmp/fap_test_install_home/.local/fap/pkgs/tool-1.0"),
+          "the failed install is rolled back, no package dir left behind");
+    CHECK(!exists("/tmp/fap_test_install_home/.local/bin/tool"),
+          "...and the bin symlink it had already created is rolled back too");
 
     FapPackage nodesktopbin = pkg;
     strcpy(nodesktopbin.desktop_type, "application");
