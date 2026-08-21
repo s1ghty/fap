@@ -42,10 +42,16 @@ static void test_lock_roundtrip(void)
     strcpy(lock->entries[0].pkg.deps[0], "openssl");
     strcpy(lock->entries[0].pkg.deps[1], "zlib");
 
-    strcpy(lock->entries[1].pkg.name, "we\"ird \\name");
+    /* name/version are validated on load (fap_validate_package) and
+     * restricted to a safe charset — a package name can never
+     * legitimately need quotes or backslashes. url isn't subject to
+     * that restriction (it's only ever handed to curl, never turned
+     * into a path or embedded in a generated script), so that's what
+     * exercises write_json_string's escaping here instead. */
+    strcpy(lock->entries[1].pkg.name, "weird-pkg");
     strcpy(lock->entries[1].pkg.version, "1.0");
     lock->entries[1].pkg.channel = FAP_CHANNEL_EDGE;
-    strcpy(lock->entries[1].pkg.url, "https://example.com/x.tar.zst");
+    strcpy(lock->entries[1].pkg.url, "https://example.com/we\"ird \\path.tar.zst");
     strcpy(lock->entries[1].pkg.sha256, "def456");
 
     CHECK(fap_lock_save(tmpfile, lock) == 0, "lock_save succeeds");
@@ -71,8 +77,8 @@ static void test_lock_roundtrip(void)
           strcmp(loaded->entries[0].pkg.deps[0], "openssl") == 0 &&
           strcmp(loaded->entries[0].pkg.deps[1], "zlib") == 0,
           "deps round-trip");
-    CHECK(strcmp(loaded->entries[1].pkg.name, "we\"ird \\name") == 0,
-          "escaped name round-trips");
+    CHECK(strcmp(loaded->entries[1].pkg.url, "https://example.com/we\"ird \\path.tar.zst") == 0,
+          "escaped url round-trips");
     CHECK(loaded->entries[1].pkg.channel == FAP_CHANNEL_EDGE, "edge channel round-trips");
     CHECK(loaded->entries[1].pkg.deps_count == 0, "package with no deps round-trips as empty");
     CHECK(loaded->entries[1].pkg.libs_count == 0, "package with no libs round-trips as empty");

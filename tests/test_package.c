@@ -158,6 +158,32 @@ static void test_rejects_path_traversal(void)
     free(compressed);
 }
 
+/* A symlink's *target* (linkname) is a second, separate traversal
+ * vector from the entry name checked above: even though the link
+ * itself lands safely inside dest_path, following it (or writing a
+ * later entry "through" it, e.g. "escape/inside.txt" where "escape"
+ * is this symlink) could still reach outside the package root. */
+static void test_rejects_symlink_target_traversal(void)
+{
+    const char *dest = "/tmp/fap_test_pkg_symlink_traversal";
+    system("rm -rf /tmp/fap_test_pkg_symlink_traversal");
+
+    unsigned char tar[4 * BLK];
+    size_t off = 0;
+    add_entry(tar, &off, '2', "bin/escape", "../../../etc/passwd", 0777, NULL, 0);
+
+    size_t bound = ZSTD_compressBound(off);
+    char *compressed = malloc(bound);
+    size_t clen = ZSTD_compress(compressed, bound, tar, off, 3);
+
+    int r = fap_package_extract(compressed, clen, dest);
+    CHECK(r < 0, "extract rejects a symlink whose target escapes the package root");
+    CHECK(access("/tmp/fap_test_pkg_symlink_traversal/bin/escape", 0) != 0,
+          "no symlink written for the rejected entry");
+
+    free(compressed);
+}
+
 static void test_rejects_garbage_zstd(void)
 {
     const char *dest = "/tmp/fap_test_pkg_garbage";
@@ -192,6 +218,7 @@ int main(void)
     printf("package:\n");
     test_extract_sample();
     test_rejects_path_traversal();
+    test_rejects_symlink_target_traversal();
     test_rejects_garbage_zstd();
     test_rejects_truncated_tar();
 
