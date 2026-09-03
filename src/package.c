@@ -285,6 +285,15 @@ static int extract_regular_file(const char *out_path, unsigned long mode,
 
 static int extract_symlink(const char *out_path, const char *linkname)
 {
+    /* Same traversal check as the entry name itself (path_is_safe) —
+     * without it, a crafted symlink could point outside dest_path, and
+     * a later archive entry written "through" it (e.g. a regular file
+     * whose own name is safe but resolves via this symlink) would
+     * escape the package root just as surely as a ".." entry name
+     * would. This is the classic tar-symlink-traversal class of bug. */
+    if (!path_is_safe(linkname))
+        return fap_error("package: symlink target \"%s\" escapes package root", linkname);
+
     char parent[FAP_MAX_PATH];
     int n = snprintf(parent, sizeof(parent), "%s", out_path);
     if (n < 0 || (size_t)n >= sizeof(parent))
