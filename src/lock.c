@@ -175,3 +175,50 @@ int fap_lock_save(const char *path, const FapLock *lock)
         return fap_error("lock: write %s: %s", path, strerror(errno));
     return 0;
 }
+
+static int lock_index_of(const FapLock *lock, const char *name)
+{
+    for (int i = 0; i < lock->count; i++)
+        if (strcmp(lock->entries[i].pkg.name, name) == 0)
+            return i;
+    return -1;
+}
+
+int fap_lock_orphans(const FapLock *lock, const FapManifest *manifest, FapLock *out)
+{
+    /* needed[i] tracks whether lock->entries[i] is reachable from the
+     * explicit set — either directly requested, or a (transitive)
+     * dependency of something that is. */
+    unsigned char needed[FAP_MAX_DEPS] = {0};
+    int stack[FAP_MAX_DEPS];
+    int sp = 0;
+
+    for (int i = 0; i < manifest->deps_count; i++) {
+        int idx = lock_index_of(lock, manifest->deps[i].name);
+        if (idx >= 0 && !needed[idx]) {
+            needed[idx] = 1;
+            stack[sp++] = idx;
+        }
+    }
+
+    while (sp > 0) {
+        const FapPackage *pkg = &lock->entries[stack[--sp]].pkg;
+        for (int d = 0; d < pkg->deps_count; d++) {
+            int idx = lock_index_of(lock, pkg->deps[d]);
+            if (idx >= 0 && !needed[idx]) {
+                needed[idx] = 1;
+                stack[sp++] = idx;
+            }
+        }
+    }
+
+    out->count = 0;
+    for (int i = 0; i < lock->count; i++) {
+        if (!needed[i]) {
+            if (out->count >= FAP_MAX_DEPS)
+                return fap_error("lock: too many orphans (max %d)", FAP_MAX_DEPS);
+            out->entries[out->count++] = lock->entries[i];
+        }
+    }
+    return 0;
+}

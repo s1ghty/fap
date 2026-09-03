@@ -8,6 +8,7 @@
 /* Forward declarations — implemented in cli.c */
 int cmd_install(int argc, char **argv);
 int cmd_remove(int argc, char **argv);
+int cmd_autoremove(int argc, char **argv);
 int cmd_sync(int argc, char **argv);
 int cmd_update(int argc, char **argv);
 int cmd_search(int argc, char **argv);
@@ -25,6 +26,7 @@ static void usage(void)
         "Commands:\n"
         "  install [pkg...]   Install package(s), update lock\n"
         "  remove  [pkg...]   Remove package(s), update lock\n"
+        "  autoremove         Remove packages no longer needed by anything installed\n"
         "  sync               Install everything in fap.toml\n"
         "  update  [pkg...]   Upgrade package(s) to latest in channel\n"
         "  search  <query>    Search registry\n"
@@ -48,6 +50,7 @@ typedef struct {
 static const Command commands[] = {
     { "install",  cmd_install,  1 },
     { "remove",   cmd_remove,   1 },
+    { "autoremove", cmd_autoremove, 1 },
     { "sync",     cmd_sync,     1 },
     { "update",   cmd_update,   1 },
     { "search",   cmd_search,   0 },
