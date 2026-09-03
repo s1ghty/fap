@@ -279,4 +279,13 @@ int  fap_symlink_force(const char *target, const char *link);
 void fap_channel_str(FapChannel ch, char *buf, size_t bufsz);
 int  fap_channel_parse(const char *s, FapChannel *out);
 
+/* Validates a FapPackage just deserialized from external bytes (a
+ * fetched channel index, or fap.lock) — name/version/bin/lib/icon/
+ * deps entries all end up as filesystem paths or get embedded into
+ * generated shell scripts and .desktop files, so they need tighter
+ * checks than "did the JSON parse". Called by registry.c and lock.c
+ * right after each package is parsed; nothing downstream of that
+ * point (install.c, cli.c) re-checks these fields. */
+int  fap_validate_package(const FapPackage *pkg);
+
 #endif /* FAP_H */

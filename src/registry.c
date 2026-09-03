@@ -210,7 +210,7 @@ static int parse_package(const char *obj, const char *obj_end,
     if (fap_json_optional_array(obj, obj_end, "deps", pkg->deps, &pkg->deps_count, FAP_MAX_PKG_DEPS) < 0)
         return -1;
 
-    return 0;
+    return fap_validate_package(pkg);
 }
 
 /* Parse a channel index document (see CLAUDE.md) into out. Exposed

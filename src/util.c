@@ -351,3 +351,98 @@ void fap_release_lock(int fd)
         close(fd);
     }
 }
+
+/*
+ * Validation for package metadata that originates outside fap's own
+ * control — a channel index fetched over the network, or a fap.lock
+ * that could've been hand-edited. name/version become directory names
+ * (see install.c's pkg_dirname()) and bin/lib/icon entries get
+ * embedded unescaped into generated shell wrapper scripts and .desktop
+ * files (see install.c's write_wrapper()/install_desktop_entry()) — so
+ * unlike a package's general resource-file tree (checked only for path
+ * traversal in package.c's path_is_safe()), these specific fields need
+ * a tight charset, not just a traversal check: something like a `"` or
+ * `$(...)` in a bin path would break out of a wrapper script's quoting
+ * and run as shell.
+ */
+
+static int is_safe_path_char(char c)
+{
+    return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
+           (c >= '0' && c <= '9') || c == '.' || c == '_' || c == '+' || c == '-';
+}
+
+/* name / version / dep-name: a single path component, restricted to a
+ * charset that can never be "." or "..", contain '/', or break out of
+ * a double-quoted shell string. */
+static int name_is_safe(const char *s)
+{
+    if (!s || !*s || strcmp(s, ".") == 0 || strcmp(s, "..") == 0)
+        return 0;
+    for (const char *p = s; *p; p++)
+        if (!is_safe_path_char(*p))
+            return 0;
+    return 1;
+}
+
+/* bin / lib / icon entries: same charset as name_is_safe, but '/' is
+ * allowed as a path separator (the explicit-path form — see
+ * install.c's resolve_pkg_entry()). Each segment still can't be empty,
+ * ".", or ".." — no escaping the package root via the metadata itself,
+ * same guarantee package.c's path_is_safe() gives the tarball's own
+ * entry names. */
+static int relpath_is_safe(const char *s)
+{
+    if (!s || !*s || s[0] == '/')
+        return 0;
+    const char *p = s;
+    while (*p) {
+        const char *seg = p;
+        while (*p && *p != '/') {
+            if (!is_safe_path_char(*p))
+                return 0;
+            p++;
+        }
+        if (p == seg || (p - seg == 1 && seg[0] == '.') ||
+            (p - seg == 2 && seg[0] == '.' && seg[1] == '.'))
+            return 0;
+        if (*p == '/')
+            p++;
+    }
+    return 1;
+}
+
+/* description / desktop_name: free text (so no charset restriction),
+ * but a newline or carriage return would let a package inject extra
+ * key=value lines into the generated .desktop file. */
+static int text_field_is_safe(const char *s)
+{
+    for (const char *p = s; *p; p++)
+        if ((unsigned char)*p < 0x20)
+            return 0;
+    return 1;
+}
+
+int fap_validate_package(const FapPackage *pkg)
+{
+    if (!name_is_safe(pkg->name))
+        return fap_error("package metadata: invalid name \"%s\"", pkg->name);
+    if (!name_is_safe(pkg->version))
+        return fap_error("package \"%s\": invalid version \"%s\"", pkg->name, pkg->version);
+    for (int i = 0; i < pkg->bins_count; i++)
+        if (!relpath_is_safe(pkg->bins[i]))
+            return fap_error("package \"%s\": invalid bin entry \"%s\"", pkg->name, pkg->bins[i]);
+    for (int i = 0; i < pkg->libs_count; i++)
+        if (!relpath_is_safe(pkg->libs[i]))
+            return fap_error("package \"%s\": invalid lib entry \"%s\"", pkg->name, pkg->libs[i]);
+    for (int i = 0; i < pkg->deps_count; i++)
+        if (!name_is_safe(pkg->deps[i]))
+            return fap_error("package \"%s\": invalid dep name \"%s\"", pkg->name, pkg->deps[i]);
+    if (pkg->icon[0] && !relpath_is_safe(pkg->icon))
+        return fap_error("package \"%s\": invalid icon path \"%s\"", pkg->name, pkg->icon);
+    if (!text_field_is_safe(pkg->description))
+        return fap_error("package \"%s\": description contains control characters", pkg->name);
+    if (!text_field_is_safe(pkg->desktop_name))
+        return fap_error("package \"%s\": desktop_name contains control characters", pkg->name);
+    return 0;
+}
