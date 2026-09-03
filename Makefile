@@ -69,7 +69,7 @@ endif
 uninstall:
 	rm -f $(BINDIR)/$(BIN)
 
-test: tests/test_hash tests/test_lock tests/test_config tests/test_registry tests/test_resolver tests/test_package tests/test_install
+test: tests/test_hash tests/test_lock tests/test_config tests/test_registry tests/test_resolver tests/test_package tests/test_install tests/test_util
 	./tests/test_hash
 	./tests/test_lock
 	./tests/test_config
@@ -77,9 +77,13 @@ test: tests/test_hash tests/test_lock tests/test_config tests/test_registry test
 	./tests/test_resolver
 	./tests/test_package
 	./tests/test_install
+	./tests/test_util
 
 tests/test_hash: tests/test_hash.c src/hash.c src/util.c
 	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
+
+tests/test_util: tests/test_util.c src/util.c
+	$(CC) $(CFLAGS) -o $@ $^
 
 tests/test_lock: tests/test_lock.c src/lock.c src/json.c src/util.c
 	$(CC) $(CFLAGS) -o $@ $^
@@ -100,4 +104,4 @@ tests/test_install: tests/test_install.c src/install.c src/package.c src/util.c
 	$(CC) $(CFLAGS) -o $@ $^ -lzstd -lcurl
 
 clean:
-	rm -f $(OBJ) $(BIN) tests/test_hash tests/test_lock tests/test_config tests/test_registry tests/test_resolver tests/test_package tests/test_install
+	rm -f $(OBJ) $(BIN) tests/test_hash tests/test_lock tests/test_config tests/test_registry tests/test_resolver tests/test_package tests/test_install tests/test_util

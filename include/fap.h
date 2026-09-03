@@ -50,6 +50,10 @@
  * second copy. */
 #define FAP_MANIFEST    "fap.toml"
 #define FAP_LOCK        "fap.lock"
+/* Advisory flock() guard for fap.toml/fap.lock — distinct from
+ * FAP_LOCK (the lockfile *content*, fap.lock itself) above. See
+ * fap_acquire_lock() in util.c. */
+#define FAP_LOCKFILE    ".lock"
 
 /* ── limits ───────────────────────────────────────────────────── */
 #define FAP_MAX_NAME    128
@@ -258,6 +262,15 @@ int  fap_bin_path(char *buf, size_t bufsz);
  * FAP_WAYLAND_SESSIONS comment above for why. Also returns -1 for
  * any other/empty desktop_type. */
 int  fap_desktop_dir(const char *desktop_type, char *buf, size_t bufsz);
+
+/* Acquires (creating if needed) an advisory flock() on the active
+ * root's FAP_LOCKFILE guard file, non-blocking — fails immediately
+ * with fap_err set if another fap process already holds it, rather
+ * than waiting. On success, *fd_out is the caller's to release with
+ * fap_release_lock(). Used by main.c around every command that writes
+ * fap.toml/fap.lock. */
+int  fap_acquire_lock(int *fd_out);
+void fap_release_lock(int fd);
 
 int  fap_mkdir_p(const char *path);
 int  fap_rm_rf(const char *path);
