@@ -275,6 +275,12 @@ static int install_desktop_entry(const FapPackage *pkg, const char *pkg_dir, con
     return 0;
 }
 
+/* Defined further down (alongside fap_remove, their other caller) —
+ * forward-declared here so fap_install()'s rollback path can reuse
+ * them instead of duplicating fap_remove()'s cleanup logic. */
+static void unlink_bins_for(const char *bin_root, const char *abs_pkg_dir);
+static void remove_desktop_entries(const char *name);
+
 int fap_install(const FapPackage *pkg)
 {
     char dirname[FAP_MAX_NAME + FAP_MAX_VERSION + 2];
@@ -346,16 +352,38 @@ int fap_install(const FapPackage *pkg)
         return fap_error("install: rename %s -> %s: %s", staging_dir, pkg_dir, strerror(errno));
     }
 
-    if (install_libs(pkg, pkg_dir, libs_root) < 0)
+    /* From here on, pkg_dir is no longer staging — it's "the install",
+     * indistinguishable on disk from a real completed one (is_installed()
+     * just stats it). A failure past this point must not leave it
+     * behind: without a rollback, the package would occupy disk space
+     * forever under a name fap itself can't see (cmd_install only
+     * lock_upserts on success — see cli.c — so `fap list` never shows
+     * it either), recoverable only by chance on a future successful
+     * reinstall of the exact same name-version. */
+    if (install_libs(pkg, pkg_dir, libs_root) < 0) {
+        fap_rm_rf(pkg_dir);
         return -1;
+    }
 
-    if (fap_mkdir_p(bin_root) < 0)
+    if (fap_mkdir_p(bin_root) < 0) {
+        fap_rm_rf(pkg_dir);
         return -1;
+    }
 
-    if (install_bins(pkg, pkg_dir, bin_root, libs_root) < 0)
+    if (install_bins(pkg, pkg_dir, bin_root, libs_root) < 0) {
+        unlink_bins_for(bin_root, pkg_dir);
+        fap_rm_rf(pkg_dir);
         return -1;
+    }
 
-    return install_desktop_entry(pkg, pkg_dir, bin_root);
+    if (install_desktop_entry(pkg, pkg_dir, bin_root) < 0) {
+        unlink_bins_for(bin_root, pkg_dir);
+        remove_desktop_entries(pkg->name);
+        fap_rm_rf(pkg_dir);
+        return -1;
+    }
+
+    return 0;
 }
 
 /* A bin/ entry belongs to abs_pkg_dir's package if it's a plain
@@ -391,6 +419,49 @@ static int bin_belongs_to(const char *link_path, const char *abs_pkg_dir)
     }
 
     return 0;
+}
+
+/* Unlinks every entry under bin_root that belongs to abs_pkg_dir (per
+ * bin_belongs_to above). Used both by fap_remove() and by fap_install()
+ * to roll back any bins a failed install already created before a
+ * later step (a missing lib, a bad desktop entry) failed — otherwise
+ * those partial symlinks/wrapper scripts would survive fap_rm_rf'ing
+ * pkg_dir as dangling links pointing at a directory that no longer
+ * exists. */
+static void unlink_bins_for(const char *bin_root, const char *abs_pkg_dir)
+{
+    struct dirent *ent;
+    DIR *bd = opendir(bin_root);
+    if (!bd)
+        return;
+    while ((ent = readdir(bd)) != NULL) {
+        if (ent->d_name[0] == '.')
+            continue;
+        char link_path[FAP_MAX_PATH];
+        if (snprintf(link_path, sizeof(link_path), "%s/%s", bin_root, ent->d_name) >= (int)sizeof(link_path))
+            continue;
+        if (bin_belongs_to(link_path, abs_pkg_dir))
+            unlink(link_path);
+    }
+    closedir(bd);
+}
+
+/* Removes name's .desktop entry from whichever target directory (if
+ * any) actually has one — see fap_remove()'s original comment on why
+ * this doesn't need to know the package's desktop_type. Shared with
+ * fap_install()'s rollback path for the same reason unlink_bins_for
+ * is: a failed install may have already written one. */
+static void remove_desktop_entries(const char *name)
+{
+    static const char *desktop_types[] = { "application", "x11-session", "wayland-session" };
+    for (size_t i = 0; i < sizeof(desktop_types) / sizeof(desktop_types[0]); i++) {
+        char dir[FAP_MAX_PATH], entry_path[FAP_MAX_PATH];
+        if (fap_desktop_dir(desktop_types[i], dir, sizeof(dir)) < 0)
+            continue;
+        if (snprintf(entry_path, sizeof(entry_path), "%s/%s.desktop", dir, name) >= (int)sizeof(entry_path))
+            continue;
+        unlink(entry_path);
+    }
 }
 
 /* Scans pkgs_root for a directory named "<name>-<anything>"; copies
@@ -448,38 +519,12 @@ int fap_remove(const char *name)
     if (n < 0 || (size_t)n >= sizeof(pkg_dir))
         return fap_error("remove: path too long");
 
-    struct dirent *ent;
-    DIR *bd = opendir(bin_root);
-    if (bd) {
-        while ((ent = readdir(bd)) != NULL) {
-            if (ent->d_name[0] == '.')
-                continue;
-            char link_path[FAP_MAX_PATH];
-            if (snprintf(link_path, sizeof(link_path), "%s/%s", bin_root, ent->d_name) >= (int)sizeof(link_path))
-                continue;
-            if (bin_belongs_to(link_path, pkg_dir))
-                unlink(link_path);
-        }
-        closedir(bd);
-    }
+    unlink_bins_for(bin_root, pkg_dir);
 
-    /* Desktop-entry cleanup: the filename is deterministic
-     * (<name>.desktop), so unlike bin_belongs_to's content-inspection
-     * approach, this doesn't need to know which desktop_type (if any)
-     * the package originally declared — just try every directory a
-     * package could plausibly have registered into and remove
-     * whichever one actually has a matching file. Best-effort: a
-     * missing file (the common case — most packages never had one) or
-     * a permission/lookup failure never fails the overall remove. */
-    static const char *desktop_types[] = { "application", "x11-session", "wayland-session" };
-    for (size_t i = 0; i < sizeof(desktop_types) / sizeof(desktop_types[0]); i++) {
-        char dir[FAP_MAX_PATH], entry_path[FAP_MAX_PATH];
-        if (fap_desktop_dir(desktop_types[i], dir, sizeof(dir)) < 0)
-            continue;
-        if (snprintf(entry_path, sizeof(entry_path), "%s/%s.desktop", dir, name) >= (int)sizeof(entry_path))
-            continue;
-        unlink(entry_path);
-    }
+    /* Desktop-entry cleanup is best-effort: a missing file (the common
+     * case — most packages never had one) or a permission/lookup
+     * failure never fails the overall remove. */
+    remove_desktop_entries(name);
 
     /* Shared libs cleanup (deleting libs_root/<lib> if no other
      * remaining package still needs it) happens one layer up, in
