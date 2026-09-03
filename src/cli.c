@@ -370,12 +370,93 @@ int cmd_remove(int argc, char **argv)
             cleanup_orphaned_libs(&removed_pkg, lock, libs_root);
     }
 
-    if (rc == 0 && any_removed && isatty(STDOUT_FILENO))
+    if (rc == 0 && any_removed && isatty(STDOUT_FILENO)) {
         printf("note: if a just-removed command still resolves, run: hash -r\n");
+
+        /* Best-effort discoverability hint, same spirit as the hash -r
+         * note above — a failure loading the manifest or computing
+         * orphans here shouldn't fail a remove that already succeeded,
+         * it just means the hint doesn't print. */
+        FapManifest hint_manifest;
+        memset(&hint_manifest, 0, sizeof(hint_manifest));
+        struct stat hint_st;
+        if (stat(manifest_p, &hint_st) == 0)
+            fap_manifest_load(manifest_p, &hint_manifest);
+        FapLock *orphans = malloc(sizeof(FapLock));
+        if (orphans) {
+            if (fap_lock_orphans(lock, &hint_manifest, orphans) == 0 && orphans->count > 0)
+                printf("note: %d package%s no longer needed by anything installed — run `fap autoremove` to remove %s\n",
+                       orphans->count, orphans->count == 1 ? "" : "s", orphans->count == 1 ? "it" : "them");
+            free(orphans);
+        }
+    }
 
     if (rc == 0)
         rc = save_lock(lock);
 
+    free(lock);
+    return rc;
+}
+
+/* ── autoremove ───────────────────────────────────────────────── */
+
+/* Removes every lock entry that isn't explicitly requested (fap.toml)
+ * and isn't reachable, via any other installed package's own recorded
+ * deps, from something that is — see fap_lock_orphans() in lock.c for
+ * the exact reachability rule. A single pass over the whole lock
+ * already catches chains (A only needed by B only needed by C): if C
+ * is unreachable from the explicit set, so is B, so both come back as
+ * orphans together in one fap_lock_orphans() call — no need to
+ * recompute after each removal. */
+int cmd_autoremove(int argc, char **argv)
+{
+    (void)argc; (void)argv;
+
+    char manifest_p[FAP_MAX_PATH];
+    if (manifest_path(manifest_p, sizeof(manifest_p)) < 0)
+        return -1;
+
+    char libs_root[FAP_MAX_PATH];
+    if (fap_root_path(FAP_LIBS, libs_root, sizeof(libs_root)) < 0)
+        return -1;
+
+    FapManifest manifest;
+    memset(&manifest, 0, sizeof(manifest));
+    struct stat st;
+    if (stat(manifest_p, &st) == 0 && fap_manifest_load(manifest_p, &manifest) < 0)
+        return -1;
+
+    FapLock *lock = malloc(sizeof(FapLock));
+    if (!lock)
+        return fap_error("out of memory");
+    int rc = load_lock(lock);
+
+    FapLock *orphans = malloc(sizeof(FapLock));
+    if (!orphans) {
+        free(lock);
+        return fap_error("out of memory");
+    }
+    if (rc == 0)
+        rc = fap_lock_orphans(lock, &manifest, orphans);
+
+    if (rc == 0 && orphans->count == 0)
+        printf("no orphaned packages to remove\n");
+
+    for (int i = 0; rc == 0 && i < orphans->count; i++) {
+        FapPackage removed_pkg = orphans->entries[i].pkg;
+        printf("removing %s (no longer needed)...\n", removed_pkg.name);
+
+        rc = fap_remove(removed_pkg.name);
+        if (rc == 0) {
+            lock_remove(lock, removed_pkg.name);
+            cleanup_orphaned_libs(&removed_pkg, lock, libs_root);
+        }
+    }
+
+    if (rc == 0)
+        rc = save_lock(lock);
+
+    free(orphans);
     free(lock);
     return rc;
 }

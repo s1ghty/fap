@@ -182,6 +182,20 @@ int fap_manifest_remove_dep(const char *path, const char *name);
 int fap_lock_load(const char *path, FapLock *out);
 int fap_lock_save(const char *path, const FapLock *lock);
 
+/* Orphan detection for `fap autoremove`: an entry in lock is an orphan
+ * if it isn't explicitly requested (not in manifest) and isn't
+ * reachable, via any *other* lock entry's own recorded deps[], from
+ * something that is. Purely offline — walks fap.lock's own already-
+ * recorded dependency graph rather than re-fetching the registry, so
+ * it reflects exactly what's actually installed right now. fap.toml
+ * already *is* the explicit/dependency distinction (see cmd_install's
+ * comment in cli.c) — no separate flag needed on FapLockEntry itself.
+ * out is filled with just the orphaned entries (out->count == 0 if
+ * none). If manifest has zero entries (an empty or missing fap.toml)
+ * every lock entry is, correctly, an orphan — nothing is explicitly
+ * keeping any of it around. */
+int fap_lock_orphans(const FapLock *lock, const FapManifest *manifest, FapLock *out);
+
 /* registry.h — fetch + parse channel index */
 
 /* Baked-in default for the stable channel — fap's own registry, so

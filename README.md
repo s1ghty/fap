@@ -18,7 +18,7 @@ Minimal C package manager. No daemon, no runtime, no bullshit.
 | Dep resolver | src/resolver.c   | ✅ done        |
 | Download     | src/package.c    | ✅ done        |
 | Install      | src/install.c    | ✅ done        |
-| Tests        | tests/*.c        | ✅ done (180 checks across 7 files) |
+| Tests        | tests/*.c        | ✅ done (206 checks across 8 files) |
 
 ## Build
 
@@ -113,6 +113,32 @@ the same privilege level you copied it from (system-wide `fap.toml`
 → `sudo fap sync`, per-user → plain `fap sync`). Transitive dependencies
 aren't written into it — those get re-resolved from the registry every
 time, same as `pkg.deps` always has.
+
+## Autoremove
+
+`fap remove <pkg>` only ever removes exactly the package you named —
+if it pulled in dependencies nobody else needs anymore, those stay
+installed, same as `apt remove` (not `apt autoremove`) or plain
+`pacman -R`. Run `fap autoremove` separately to clean those up: it
+removes every installed package that both (a) isn't itself listed in
+`fap.toml`, and (b) isn't a dependency, even transitively, of anything
+that is. `fap remove` prints a note when it leaves orphans behind, the
+same way it already nudges you toward `hash -r`.
+
+```
+$ fap remove firefox
+removing firefox...
+note: if a just-removed command still resolves, run: hash -r
+note: 2 packages no longer needed by anything installed — run `fap autoremove` to remove them
+
+$ fap autoremove
+removing some-firefox-only-dependency (no longer needed)...
+removing another-one (no longer needed)...
+```
+
+A whole chain (A only needed B, B only needed C) comes back and gets
+removed together in one `fap autoremove` — no need to run it more than
+once to fully unwind a chain.
 
 ## Registry config
 

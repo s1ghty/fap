@@ -7,7 +7,7 @@ No daemon, no runtime, no bloat.
 ## Design decisions (settled, do not revisit)
 - Target: **Linux x86_64 only**. No cross-platform support, no arch/OS detection anywhere in the codebase — don't add any.
 - Written in **C99**
-- **fap.toml** — declarative manifest (what you want), lives at `<root>/fap.toml` (see Install root below) — machine-wide, not per-directory (fap is a system package manager, not a per-project dependency tool; running `fap install` from two different directories, at the same privilege level, must see the same state, not create two). `fap install`/`fap remove` also keep it in sync (add/drop a bare, unpinned entry) so it always reflects your explicit installs, NixOS-`configuration.nix`-style — copy just this file to another machine and `fap sync` reproduces the same top-level packages. Only top-level requested packages are recorded, never the transitive deps a resolve pulled in alongside them — those are re-derived from the registry every time, not tracked declaratively.
+- **fap.toml** — declarative manifest (what you want), lives at `<root>/fap.toml` (see Install root below) — machine-wide, not per-directory (fap is a system package manager, not a per-project dependency tool; running `fap install` from two different directories, at the same privilege level, must see the same state, not create two). `fap install`/`fap remove` also keep it in sync (add/drop a bare, unpinned entry) so it always reflects your explicit installs, NixOS-`configuration.nix`-style — copy just this file to another machine and `fap sync` reproduces the same top-level packages. Only top-level requested packages are recorded, never the transitive deps a resolve pulled in alongside them — those are re-derived from the registry every time, not tracked declaratively. This split is also exactly what `fap autoremove` uses to find orphans: a fap.lock entry not in fap.toml, and not reachable via any *other* lock entry's own recorded `deps`, is no longer needed by anything explicitly requested — no separate "explicit vs dependency" flag needed anywhere, fap.toml membership already is that flag.
 - **fap.lock** — lockfile (exact resolved versions + hashes), lives at `<root>/fap.lock`, same machine-wide reasoning as fap.toml
 - Two channels: **stable** and **edge**
 - Atomic installs via **staging directory** — fully written before any symlink swap
@@ -25,6 +25,7 @@ No daemon, no runtime, no bloat.
 ```
 fap install [pkg]       # install package(s), update lock and fap.toml
 fap remove [pkg]        # remove package, update lock and fap.toml
+fap autoremove          # remove packages no longer needed by anything installed
 fap sync                # install everything in fap.toml (from lock if exists)
 fap update [pkg]        # upgrade to latest in channel, update lock
 fap search <query>      # search registry
@@ -64,7 +65,8 @@ fap/
     ├── test_registry.c
     ├── test_resolver.c
     ├── test_package.c
-    └── test_install.c  ← 180 checks total across all 7 files
+    ├── test_install.c
+    └── test_util.c     ← 206 checks total across all 8 files
 ```
 
 ## fap.toml format
